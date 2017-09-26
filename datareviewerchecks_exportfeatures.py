@@ -49,6 +49,9 @@
 # REVTABLEMAIN is the name of the table that holds the error records
 # that are of interest.
 
+# Need to move the error reporting parts of this script to a
+# separate script.
+
 import os
 import time
 
@@ -62,8 +65,8 @@ from arcpy.da import SearchCursor as daSearchCursor
 from pathFunctions import (returnGDBOrSDEName, returnFeatureClass)
 
 from datareviewerchecks_config import (revTable, originTablesGDB, errorFeaturesGDB,
-    mainFolder, errorReportCSVName, errorReportCSV, useRAndHCheck,
-    nonMonotonicOutputFC, errorReportRowsOrder, nullable)
+    mainFolder, errorReportCSVName, errorReportCSV, useRAndHCheck, nonMonotonicOutputFC, 
+    errorReportRowsOrder, nullable, single_part_point_errors, single_part_line_errors)
 
 def formatCheckTitle(nameToBeUnderscorified):
     newName = nameToBeUnderscorified
@@ -215,15 +218,19 @@ def exportErrorsToFeatureClasses(reviewTable, originGDB, errorOutputGDB, errorOu
             pass
     
     # Need to write a short CSV here that tells the number and type of errors.
-    print('Writing error information to an error reports file called' + str(errorReportCSVName) + '.')
-    
-    with open(errorReportCSV, 'w') as fHandle:
-        for errorFeature in errorReportRowsOrder:
-            if errorFeature in csvDictOfErrorFeatures:
-                errorFeatureCount = csvDictOfErrorFeatures[errorFeature]
-                fHandle.write(str(errorFeature) + ', ' + str(errorFeatureCount) + '\n')
-            else:
-                fHandle.write(str(errorFeature) + ', ' + str(0) + '\n')
+    print('Writing error information to an error reports file called ' + str(errorReportCSVName) + '.')
+    try:
+        with open(errorReportCSV, 'w') as fHandle:
+            for errorFeature in errorReportRowsOrder:
+                if errorFeature in csvDictOfErrorFeatures:
+                    errorFeatureCount = csvDictOfErrorFeatures[errorFeature]
+                    fHandle.write(str(errorFeature) + ', ' + str(errorFeatureCount) + '\n')
+                else:
+                    fHandle.write(str(errorFeature) + ', ' + str(0) + '\n')
+            # Add a blank line to match previous formatting.
+            fHandle.write('\n')
+    except:
+        print("There was an error writing to the file.")
     
     # Modify this so that it just checks for the existence of the roads
     # and highways check output, rather than relying on the config
@@ -237,6 +244,7 @@ def exportErrorsToFeatureClasses(reviewTable, originGDB, errorOutputGDB, errorOu
     env.workspace = previousWorkspace
     
     reportExtensionForRAndHCheck(nonMonotonicOutputFC)
+    reportExtensionForQCGDB(single_part_point_errors, single_part_line_errors)
 
 
 def reportExtensionForRAndHCheck(featuresToCheck):
@@ -250,9 +258,11 @@ def reportExtensionForRAndHCheck(featuresToCheck):
         print("Roads & Highways Non-Monotonic Check output was found.")
         print("Extending the errors report with information from the Roads & Highways Non-Monotonicity Check.")
         
-        with open(errorReportCSV, 'a') as fHandle:
-            fHandle.write('\n' + 'Roads & Highways checks follow: ' + '\n')
-            fHandle.write(featuresName + ', ' + str(errorsFromRAndHCount) + '\n')
+        try:
+            with open(errorReportCSV, 'a') as fHandle:
+                fHandle.write(featuresName + ', ' + str(errorsFromRAndHCount) + '\n')
+        except:
+            print("There was an error writing to the file.")
         
         #errorsRHGDB = returnGDBOrSDEName(featuresToCheck)
         #errorsFeatureClass = returnFeatureClass(featuresToCheck)
@@ -271,22 +281,46 @@ def reportExtensionForRAndHCheck(featuresToCheck):
         print("Will not add additional information to the errors report csv.")
 
 
+# New function to count the number of SinglePartPointErrors and SinglePartLineErrors.
+def reportExtensionForQCGDB(singlePartPointErrors, singlePartLineErrors):
+    # Get a count for the singlepart features (if they exist)
+    # and append the count data to the end of the errorReportCSV.
+    if Exists(singlePartPointErrors) and Exists(singlePartLineErrors):
+        singlePartPointFeaturesName = returnFeatureClass(singlePartPointErrors)
+        singlePartPointErrorsResult = GetCount_management(singlePartPointErrors)
+        singlePartPointErrorsCount = int(singlePartPointErrorsResult.getOutput(0))
+        
+        singlePartLineFeaturesName = returnFeatureClass(singlePartLineErrors)
+        singlePartLineErrorsResult = GetCount_management(singlePartLineErrors)
+        singlePartLineErrorsCount = int(singlePartLineErrorsResult.getOutput(0))
+        try:
+            with open(errorReportCSV, 'a') as fHandle:
+                fHandle.write(singlePartPointFeaturesName + ', ' + str(singlePartPointErrorsCount) + '\n')
+                fHandle.write(singlePartLineFeaturesName + ', ' + str(singlePartLineErrorsCount) + '\n')
+        except:
+            print("There was an error writing to the file.")
+    else:
+        print("The Single Part output was not found.")
+        print("Will not add the Single Part information to the errors report csv.")
+
 def main():
     print 'Error exports starting...'
     exportErrorsToFeatureClasses(revTable, originTablesGDB, errorFeaturesGDB, mainFolder)
     print 'Error exports complete.'
 # To get the multipart point errors, you can join the REVTABLEPOINT.LINKID to the REVTABLEMAIN.RECORDID.
+
+# Unrelated:
 # Need a script that won't mess up when dissolving this for this:
-#    SB         NB
-#     *         *
-#   /| |\       |\
-#  / | | \      | \
-#  | | | |      | |
-#  | | | |      | |
-#  | | | |      | |
-#  \ | | /      | /
-#   \| |/       |/
-#     *         *
+#     SB         NB
+#    //\\        |\
+#   / || \       | \
+#  /  ||  \      | |
+#  |  ||  |      | |
+#  |  ||  |      | |
+#  |  ||  |      | |
+#  \  ||  /      | |
+#   \ || /       | /
+#    \\//        |/
 
 if __name__ == "__main__":
     main()

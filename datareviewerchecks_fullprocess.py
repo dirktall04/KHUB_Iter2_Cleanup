@@ -12,6 +12,9 @@
 # With the KDOTProcess, ramps are not currently showing up in the output.
 # Fix next.
 
+# This process produces a null output for the 10B_X_Routes.gdb\Routes feature class, so
+# it is not able to be error checked on its own.
+
 import datetime
 import time
 
@@ -23,10 +26,11 @@ import datareviewerchecks_kdotprocessimprovements_iter2 as kdotprocesstocreateth
 # Source dissolve should happen after simplification and flipping, but before ... ghost route detection?
 # Means it needs to be inside the kdotprocessimprovements_iter2 script.
 ###import datareviewerchecks_sourcedissolve as sourcedissolve
-import datareviewerchecks_exportfeatures as exportthefeatures
 import datareviewerchecks_lrsroutecreation as createtheroutes
 import datareviewerchecks_runchecks as runthechecks
 import datareviewerchecks_nonmonoroadsandhighways as nonmonorandhcheck
+import datareviewerchecks_exportfeatures as exportthefeatures
+import datareviewerchecks_qcgdbexport as qcgdbexport
 ###import datareviewerchecks_grabconflationdata as grabconflationdata
 
 startTime = datetime.datetime.now()
@@ -70,6 +74,11 @@ if __name__ == "__main__":
         nonmonorandhcheck.main()
     else:
         pass
+    if configsettings.createQCGDB == True:
+        qcgdbexport.main()
+    else:
+        print("Not exporting error features to the QC GDB because the createQCGDB setting value is False.")
+    # Need to split this so that it does the feature export only and the reporting happens in a different script.
     if configsettings.exportFeatures == True:
         exportthefeatures.main()
     else:
@@ -83,6 +92,9 @@ if __name__ == "__main__":
 
 else:
     pass
+
+
+
 
 #Next steps:
 # Include the Ghost Route detection script.

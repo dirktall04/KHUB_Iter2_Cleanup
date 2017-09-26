@@ -31,7 +31,7 @@ from arcpy import (Append_management, AddField_management,
 
 from datareviewerchecks_config import (inputCenterlines, interchangeRampFC,
     interchangeRampFCRepairCopy, routesSourceCenterlines,
-    routesSourceFeatureLayer, nullable, useNewFieldLogic, fcAsFeatureLayer,
+    routesSourceFeatureLayer, nullable, fieldLogicToUse, fieldLogicToUseOptions, fcAsFeatureLayer,
     n1RouteId, n1FromMeas, n1ToMeas)
 
 
@@ -58,14 +58,14 @@ def routesSourceCreation():
     # SourceToMeasure (Double)
     AddField_management(routesSourceCenterlines, "SourceToMeasure", "DOUBLE", "", "", "", "SourceToMeasure", nullable)
     
-    if useNewFieldLogic == True:
+    if fieldLogicToUse == fieldLogicToUseOptions[0] or fieldLogicToUse == fieldLogicToUseOptions[1]:
         KDOTKeyCalculation_NewFieldLogic()
     else:
         TranscendFieldCalculation()
     
     TranscendRampReplacement()
     
-    if useNewFieldLogic == True:
+    if fieldLogicToUse == fieldLogicToUseOptions[0] or fieldLogicToUse == fieldLogicToUseOptions[1]:
         KDOTKeyCalculation_NewFieldLogic()
     else:
         TranscendFieldCalculation()

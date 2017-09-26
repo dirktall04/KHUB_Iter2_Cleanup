@@ -344,7 +344,7 @@ def concatFullTargetKeys():
         if str(updateListItem[0]).lower() != 'none':
             countyPre = updateListItem[0]
         else:
-            countyPre = '404' # County Not Found
+            countyPre = '994' # County Not Found, 404 was previously used, but could be mistaken for a city number.
         if str(updateListItem[1]).lower() != 'none':
             prefixTarget = updateListItem[1]
         else:

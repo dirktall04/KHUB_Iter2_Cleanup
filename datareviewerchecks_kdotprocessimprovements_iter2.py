@@ -9,15 +9,23 @@
 # Updated 2017-03-15, by dirktall04
 # Updated 2017-03-27, by dirktall04
 # Updated 2017-03-28, by dirktall04
+# Updated 2017-09-07, by dirktall04
+# Updated 2017-09-12, by dirktall04
 
 # Still need to investigate why there are large areas that didn't calculate a local key.
 # Several of them are KDOT Rejected or Private, or Other, but some have Local Funclass
 # LRS Key and a null KDOTLRSKey.
 
+# This currently does not set any routes to 'G' suffix. It does, however, populate OverlapStatus with 'Z'.
+
+# Add a config item to allow for bypassing the addition of ramps so that it's
+# possible to specify checks of individual prefixes that do not include the
+# ramp features.
 
 import gc
 import os
 import time
+import traceback
 
 from pathFunctions import (returnGDBOrSDEPath,
     returnFeatureClass, returnGDBOrSDEName)##, returnGDBOrSDEFolder) -- Using mainFolder instead.
@@ -40,16 +48,15 @@ import datareviewerchecks_multithreadedfeaturesimplification as featuresimplific
 from datareviewerchecks_config import (reviewerSessionGDBFolder,
     inputCenterlines, interchangeRampFC, interchangeRampFCRepairCopy,
     outputRoutes, featureLayerCL_For_Start_CP, featureLayerCL_For_End_CP,
-    routesSourceCenterlines, routesSourceFCOne, fcAsFeatureLayer,
-    startCalibrationPoints, endCalibrationPoints,
-    mergedCalibrationPoints, dissolvedCalibrationPoints, mainFolder,
+    routesSourceCenterlines, routesSourceFCOne, fcAsFeatureLayer, mainFolder,
     nullable, gdbForProcessing, featureSimplificationOutput, inMemModifiedData,
     conflationCountyBoundary, stewardIndexNameCB, stewardIndexNameRSC,
     routesSourceIntermediate, flippedOutput,
     routesSource1, routesSource2, routesSource3, n1RouteId, 
-    n1FromMeas, n1ToMeas, rampsOutputGDB,
+    n1FromMeas, n1ToMeas, rampsOutputGDB, fieldLogicToUse, fieldLogicToUseOptions,
+    rampReplacementToUse, rampReplacementOptions,
     rampsOutputFC, rampsOutputFullPath, dissolveErrorsFile,
-    dissolvedFlippedOutput, dissolveOutFC, useNewFieldLogic, KDOTRouteId,
+    dissolvedFlippedOutput, dissolveOutFC, KDOTRouteId,
     KDOTMeasBeg, KDOTMeasEnd, rampsBeginMeasure, rampsEndMeasure)
 
 
@@ -62,6 +69,14 @@ env.workspace = returnGDBOrSDEPath(routesSourceFCOne)
 # the 'LL' and the 'PEANO' (Peano curve algorithm) options to see which gives a better
 # result for the sorting. - Might also be worth including the road label in the sort
 # just after the spatial option.
+# Do a selection by road name + road type suffix instead of what it's currently doing rather than
+# just a sort. Should try to get all of the Main St segments that are contiguous
+# to have the same LRS Key, but give them different LRS Keys where non-contiguous
+# and where the road type suffix changes,
+# i.e. Main St and Main Dr are different but all of the contigous pieces for
+# one should have the same LRS Key, and the same for the other, so that if
+# they are the only Main St and Main Dr in the county, then there are only
+# 2 different LRS Keys between them.
 
 
 def routesSourceCreation():
@@ -72,17 +87,26 @@ def routesSourceCreation():
     # Need to rework this part so that they pass the feature class back and forth
     # instead of each creating one for their own use and the next one
     # having to chain on top of that.
-    '''
-    KDOTSourceDataInit()
-    KDOTRampReplacement_Update_HPMS() #-- Done, KDOTKeyCalculation_Update() can (re)start from here.
-    ##KDOTRampReplacement_Update()
     
-    if useNewFieldLogic == True:
+    KDOTSourceDataInit()
+    if rampReplacementToUse == rampReplacementOptions[0]: # 'hpms'
+        KDOTRampReplacement_Update_HPMS()
+    elif rampReplacementToUse == rampReplacementOptions[1]: # 'old'
+        KDOTRampReplacement_Update()
+    elif rampReplacementToUse == rampReplacementOptions[2]: # 'none'
+        KDOTRampReplacement_None()
+
+    
+    if fieldLogicToUse == fieldLogicToUseOptions[0]:
+        # This resolves the issue of the KDOT_LRS_KEY field not updating with changes to its components.
+        KDOTKeyCalculation_KeyUpdatesFromComponents()
+    elif fieldLogicToUse == fieldLogicToUseOptions[1]:
         KDOTKeyCalculation_NewFieldLogic()
     else:
         KDOTKeyCalculation_Update()
-    '''
-    # Restart after KDOTKeyCalculation_Update()
+    
+    
+    # Restart point, after KDOTKeyCalculation_*()
     KDOTFeatureSimplification()
     
     KDOTFlipProcessing() #-- Probably still needs improvement to flipping logic.
@@ -92,9 +116,10 @@ def routesSourceCreation():
     KDOTOverlappingRoutesDissolveFix()
     KDOTOverlappingRoutesFlaggingFix()
     
-    ##KDOTKeyCalculation_OLD()
-    ##KDOTKeyCalculation() # Looks like it's meant to generate target network route keys, but...
-    ## it doesn't work well just yet. I probably mistranslated some of the SQL to Python equivalents.
+    # Need to do source key updating from the component parts and rerun
+    # the dissolve, then rerun the feature simplification post-dissolve
+    # in case the dissolve introduces any vertices that are too
+    # close to one another.
     
     KDOT3RoutesSourceExport()
 
@@ -126,6 +151,23 @@ def KDOTSourceDataInit():
     AddField_management(routesSourceFCOne, n1ToMeas, "DOUBLE", "", "", "", n1ToMeas, nullable)
 
 
+def KDOTRampReplacement_None():
+    '''This function copies the data from routesSourceFCOne to the rampsOutputFullPath to allow the rest of the functions
+        to continue from the feature class that they expect to have available. Used in the creation of data products like
+        the StateHighwaySystem and RMCRoutes error reports that exclude ramp data & errors.'''
+    if Exists(rampsOutputGDB):
+        try:
+            Delete_management(rampsOutputGDB)
+        except:
+            pass
+    else:
+        pass
+    
+    print('Creating a new gdb to hold the ramps update output at ' + str(rampsOutputGDB) + '.')
+    CreateFileGDB_management(mainFolder, returnGDBOrSDEName(rampsOutputGDB))
+    CopyFeatures_management(routesSourceFCOne, rampsOutputFullPath)
+
+    
 def KDOTRampReplacement_Update_HPMS():
     # Tested correct and working as expected on 2017-03-03
     # Needs retested after HPMS routes were selected to be
@@ -729,7 +771,7 @@ def ParseLRS_ROUTE_PREFIX(passedFeatureLayer):
     fieldsToAdd = [x for x in fieldsNeeded if x not in currentFieldNames]
     
     if lrsPrefixField in fieldsToAdd:
-        AddField_management(passedFeatureLayer, lrsPrefixField, "DATE", "", "", "", "LRS_ROUTE_PREFIX", nullable)
+        AddField_management(passedFeatureLayer, lrsPrefixField, "TEXT", "", "", 1, "LRS_ROUTE_PREFIX", nullable)
     else:
         pass
     
@@ -944,6 +986,301 @@ def cursorSwapColumnValues(layerAsFeatureLayer, fieldValuesToSwap, selectionQuer
     return layerAsFeatureLayer
 
 
+def KDOTKeyCalculation_KeyUpdatesFromComponents():
+    print("Using the new field logic to calculate the values of the source lrs ID and measure fields.")
+    MakeFeatureLayer_management(rampsOutputFullPath, fcAsFeatureLayer)
+    # As long as the KDOT_LRS_KEY is not null, calculate from the
+    # current fields.
+    
+    # Prior to doing any of this, I added a field to cache the
+    # current KDOT_LRS_KEY to check for mistakes and recover from
+    # them if any were found.
+    
+    # Use the prefix field to decide on what action to take to update the KDOTRouteId.
+    # If the prefix is null, do nothing.
+    # If the prefix is I, U, K, create the KDOTRouteId value from the SHS component parts.
+    selectionQuery = """ "LRS_ROUTE_PREFIX" IN ('I', 'U', 'K') """
+    necessaryFields = ["LRS_COUNTY_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "KDOT_DIRECTION_CALC"]
+    dynNonNullSelectionQuery = GenerateNonNullSelectionQuery(necessaryFields)
+    fullSelectionQuery = selectionQuery + """ AND """ + dynNonNullSelectionQuery
+    
+    fieldsToUseForUpdating = ["LRS_COUNTY_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "KDOT_DIRECTION_CALC",
+        "KDOT_LRS_KEY"]
+    
+    newCursor = daUpdateCursor(fcAsFeatureLayer, fieldsToUseForUpdating, fullSelectionQuery)
+    
+    for cursorRowItem in newCursor:
+        cursorListItem = list(cursorRowItem)
+        countyPre = cursorListItem[0]
+        routePre = cursorListItem[1]
+        routeNum = cursorListItem[2]
+        routeSuf = cursorListItem[3]
+        lrsUniqueIdent = cursorListItem[4]
+        if len(lrsUniqueIdent) > 1:
+            lrsUniqueIdent = lrsUniqueIdent[-1]
+        else:
+            pass
+        directionCalc = cursorRowItem[5]
+        directionText = '-EB'
+        try:
+            if int(routeNum) % 2 == 0 and int(directionCalc) == 0:
+                directionText = '-EB'
+            elif int(routeNum) % 2 == 0 and int(directionCalc) != 0:
+                directionText = '-WB'
+            elif int(routeNum) % 2 != 0 and int(directionCalc) == 0:
+                directionText = '-NB'
+            elif int(routeNum) % 2 != 0 and int(directionCalc) != 0:
+                directionText = '-SB'
+            newKey = str(countyPre) + str(routePre) + str(routeNum) + str(routeSuf) + str(lrsUniqueIdent) + directionText
+            cursorRowItem[6] = newKey
+            newCursor.updateRow(cursorListItem)
+        except:
+            try:
+                print(traceback.format_exc())
+                print("Could not calculate a new LRS_KEY for the given row.")
+                print("The row looks like this: " + str(cursorListItem) + ".")
+            except:
+                pass
+            newCursor.next()
+    
+    try:
+        del newCursor
+    except:
+        pass
+    
+    ###------------------------------------------------------------------------------------------------------------###
+    ### If the prefix is not I, U, K and not X, create the KDOTRouteID from the Non-SHS, Non-Ramp component parts. ###
+    ###------------------------------------------------------------------------------------------------------------###
+    
+    # For prefix R & M
+    selectionQuery = """ "LRS_ROUTE_PREFIX" IN ('R', 'M') """
+    necessaryFields = ["LRS_COUNTY_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_ADMO"]
+    dynNonNullSelectionQuery = GenerateNonNullSelectionQuery(necessaryFields)
+    fullSelectionQuery = selectionQuery + """ AND """ + dynNonNullSelectionQuery
+    
+    fieldsToUseForUpdating = ["LRS_COUNTY_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_ADMO",
+        "KDOT_DIRECTION_CALC", "KDOT_LRS_KEY"]
+    
+    newCursor = daUpdateCursor(fcAsFeatureLayer, fieldsToUseForUpdating, fullSelectionQuery)
+    
+    for cursorRowItem in newCursor:
+        cursorListItem = list(cursorRowItem)
+        countyPre = cursorListItem[0]
+        routePre = cursorListItem[1]
+        routeNum = cursorListItem[2]
+        routeSuf = cursorListItem[3]
+        lrsUniqueIdent = cursorListItem[4]
+        if len(lrsUniqueIdent) > 1:
+            lrsUniqueIdent = lrsUniqueIdent[-1]
+        else:
+            pass
+        lrsAdmo = cursorListItem[5]
+        directionCalc = cursorRowItem[6]
+        if directionCalc is None:
+            directionCalc = '0'
+        else:
+            pass
+        try:
+            newKey = str(countyPre) + str(routePre) + str(routeNum) + str(routeSuf) + str(lrsUniqueIdent) + str(lrsAdmo) + str(directionCalc)
+            cursorRowItem[7] = newKey
+            newCursor.updateRow(cursorListItem)
+        except:
+            try:
+                print(traceback.format_exc())
+                print("Could not calculate a new LRS_KEY for the given row.")
+                print("The row looks like this: " + str(cursorListItem) + ".")
+            except:
+                pass
+            newCursor.next()
+    
+    try:
+        del newCursor
+    except:
+        pass
+    
+    # For prefix C, Urban Classified, which uses LRS_URBAN_PRE.
+    selectionQuery = """ "LRS_ROUTE_PREFIX" IN ('C') """
+    necessaryFields = ["LRS_URBAN_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_ADMO"]
+    dynNonNullSelectionQuery = GenerateNonNullSelectionQuery(necessaryFields)
+    # Uses LRS_ADMO
+    ####LRS_ROUTE_NUM, LRS_ROUTE_SUFFIX, LRS_UNIQUE_IDENT, then LRS_ADMO, then 0 for inventory direction.
+    fullSelectionQuery = selectionQuery + """ AND """ + dynNonNullSelectionQuery
+    
+    fieldsToUseForUpdating = ["LRS_URBAN_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_ADMO",
+        "KDOT_DIRECTION_CALC", "KDOT_LRS_KEY"]
+    
+    newCursor = daUpdateCursor(fcAsFeatureLayer, fieldsToUseForUpdating, fullSelectionQuery)
+    
+    for cursorRowItem in newCursor:
+        cursorListItem = list(cursorRowItem)
+        urbanPre = cursorListItem[0]
+        routePre = cursorListItem[1]
+        routeNum = cursorListItem[2]
+        routeSuf = cursorListItem[3]
+        lrsUniqueIdent = cursorListItem[4]
+        if len(lrsUniqueIdent) > 1:
+            lrsUniqueIdent = lrsUniqueIdent[-1]
+        else:
+            pass
+        lrsAdmo = cursorListItem[5]
+        directionCalc = cursorRowItem[6]
+        if directionCalc is None:
+            directionCalc = '0'
+        else:
+            pass
+        try:
+            newKey = str(urbanPre) + str(routePre) + str(routeNum) + str(routeSuf) + str(lrsUniqueIdent) + str(lrsAdmo) + str(directionCalc)
+            cursorRowItem[7] = newKey
+            newCursor.updateRow(cursorListItem)
+        except:
+            try:
+                print(traceback.format_exc())
+                print("Could not calculate a new LRS_KEY for the given row.")
+                print("The row looks like this: " + str(cursorListItem) + ".")
+            except:
+                pass
+            newCursor.next()
+    
+    try:
+        del newCursor
+    except:
+        pass
+    
+    
+    # If the prefix is X, create the KDOTRouteID from the Ramp route component parts.
+    selectionQuery = """ "LRS_ROUTE_PREFIX" = 'X' """
+    # Doesn't make sense to require *_SUFFIX on ramps. - Just use '0' if it is null.
+    # Only 12 Ramps have non-null LRS_ROUTE_SUFFIX values. For those, it is all '0' or 'No Suffix'.
+    # If people set LRS_ROUTE_SUFFIX to 'G' or 'Z' for ramps though, that needs to be handled correctly.
+    necessaryFields = ["LRS_COUNTY_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_UNIQUE_IDENT", "LRS_ADMO"]
+    dynNonNullSelectionQuery = GenerateNonNullSelectionQuery(necessaryFields)
+    fullSelectionQuery = selectionQuery + """ AND """ + dynNonNullSelectionQuery
+    
+    fieldsToUseForUpdating = ["LRS_COUNTY_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_ADMO",
+        "KDOT_DIRECTION_CALC", "KDOT_LRS_KEY"]
+    
+    newCursor = daUpdateCursor(fcAsFeatureLayer, fieldsToUseForUpdating, fullSelectionQuery)
+    
+    for cursorRowItem in newCursor:
+        cursorListItem = list(cursorRowItem)
+        countyPre = cursorListItem[0]
+        routePre = cursorListItem[1]
+        routeNum = cursorListItem[2]
+        routeSuf = cursorListItem[3]
+        if routeSuf is None:
+            routeSuf = '0'
+        else:
+            pass
+        lrsUniqueIdent = cursorListItem[4]
+        if len(lrsUniqueIdent) > 1:
+            lrsUniqueIdent = lrsUniqueIdent[-1]
+        else:
+            pass
+        lrsAdmo = cursorListItem[5]
+        directionCalc = cursorRowItem[6]
+        if directionCalc is None:
+            directionCalc = '0'
+        else:
+            pass
+        try:
+            newKey = str(countyPre) + str(routePre) + str(routeNum) + str(routeSuf) + str(lrsUniqueIdent) + str(lrsAdmo) + str(directionCalc)
+            cursorRowItem[7] = newKey
+            newCursor.updateRow(cursorListItem)
+        except:
+            try:
+                print(traceback.format_exc())
+                print("Could not calculate a new LRS_KEY for the given row.")
+                print("The row looks like this: " + str(cursorListItem) + ".")
+            except:
+                pass
+            newCursor.next()
+    
+    try:
+        del newCursor
+    except:
+        pass
+    
+    # For all other prefixes.
+    selectionQuery = """ "LRS_ROUTE_PREFIX" NOT IN ('I', 'U', 'K', 'X', 'R', 'M', 'C') """
+    necessaryFields = ["LRS_COUNTY_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_ADMO"]
+    dynNonNullSelectionQuery = GenerateNonNullSelectionQuery(necessaryFields)
+    fullSelectionQuery = selectionQuery + """ AND """ + dynNonNullSelectionQuery
+    
+    fieldsToUseForUpdating = ["LRS_COUNTY_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_ADMO",
+        "KDOT_DIRECTION_CALC", "KDOT_LRS_KEY"]
+    
+    newCursor = daUpdateCursor(fcAsFeatureLayer, fieldsToUseForUpdating, fullSelectionQuery)
+    
+    for cursorRowItem in newCursor:
+        cursorListItem = list(cursorRowItem)
+        countyPre = cursorListItem[0]
+        routePre = cursorListItem[1]
+        routeNum = cursorListItem[2]
+        routeSuf = cursorListItem[3]
+        lrsUniqueIdent = cursorListItem[4]
+        if len(lrsUniqueIdent) > 1:
+            lrsUniqueIdent = lrsUniqueIdent[-1]
+        else:
+            pass
+        lrsAdmo = cursorListItem[5]
+        directionCalc = cursorRowItem[6]
+        if directionCalc is None:
+            directionCalc = '0'
+        else:
+            pass
+        try:
+            newKey = str(countyPre) + str(routePre) + str(routeNum) + str(routeSuf) + str(lrsUniqueIdent) + str(lrsAdmo) + str(directionCalc)
+            cursorRowItem[7] = newKey
+            newCursor.updateRow(cursorListItem)
+        except:
+            try:
+                print(traceback.format_exc())
+                print("Could not calculate a new LRS_KEY for the given row.")
+                print("The row looks like this: " + str(cursorListItem) + ".")
+            except:
+                pass
+            newCursor.next()
+    
+    try:
+        del newCursor
+    except:
+        pass
+    
+    
+    selectionQuery = """ "KDOT_LRS_KEY" IS NOT NULL """
+    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
+    # SourceRouteId = KDOT_LRS_KEY
+    CalculateField_management (fcAsFeatureLayer, n1RouteId, "!" + str(KDOTRouteId) + "!", "PYTHON_9.3")
+    # SourceFromMeasure = county_log_begin
+    CalculateField_management (fcAsFeatureLayer, n1FromMeas, "!" + str(KDOTMeasBeg) + "!", "PYTHON_9.3")
+    # SourceToMeasure = county_log_end
+    CalculateField_management (fcAsFeatureLayer, n1ToMeas, "!" + str(KDOTMeasEnd) + "!", "PYTHON_9.3")
+    selectionQuery = """ KDOT_LRS_KEY IS NOT NULL AND county_log_begin IS NULL AND county_log_end IS NULL AND (COUNTY_BEGIN_MP IS NOT NULL OR COUNTY_END_MP IS NOT NULL) """
+    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
+    countResult = GetCount_management(fcAsFeatureLayer)
+    intCount = int(countResult.getOutput(0))
+    print("After the new selection query to deal with the fact that State routes did not have their begin and end measure populated correctly, " +
+        str(intCount) + " were selected.")
+    # SourceFromMeasure = COUNTY_BEGIN_MP
+    CalculateField_management (fcAsFeatureLayer, n1FromMeas, "!COUNTY_BEGIN_MP!", "PYTHON_9.3")
+    # SourceToMeasure = COUNTY_END_MP
+    CalculateField_management (fcAsFeatureLayer, n1ToMeas, "!COUNTY_END_MP!", "PYTHON_9.3")
+
+
+def GenerateNonNullSelectionQuery(passedInFields):
+    selectionQuery = """ """
+    fieldCounter = 0
+    for fieldToUse in passedInFields:
+        if fieldCounter != 0:
+            selectionQuery += """ AND \"""" + str(fieldToUse) + """\" IS NOT NULL """
+        else:
+            selectionQuery += """ \"""" + str(fieldToUse) + """\" IS NOT NULL """
+        
+        fieldCounter += 1
+    
+    return selectionQuery
+
+
 def KDOTKeyCalculation_NewFieldLogic():
     print("Using the new field logic to calculate the values of the source lrs ID and measure fields.")
     MakeFeatureLayer_management(rampsOutputFullPath, fcAsFeatureLayer)
@@ -992,6 +1329,7 @@ def KDOTKeyCalculation_Update():
     
     MakeFeatureLayer_management(rampsOutputFullPath, fcAsFeatureLayer)
     
+    # This doesn't work well. Don't call it until it's been worked on more.
     ParseLRS_ROUTE_PREFIX(fcAsFeatureLayer)
     
     tempDesc = Describe(fcAsFeatureLayer)
@@ -1271,7 +1609,7 @@ def KDOTKeyCalculation():
     #-8 Parse the fields for NON_STATE_HIGHWAYS Local Roads
     # Use an update cursor to set several fields at once:
     updateFields = ["KDOT_LRS_KEY", "LRS_COUNTY_PRE", "LRS_ROUTE_NUM", "LRS_ROUTE_NUM1", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_UNIQUE_IDENT1", "LRS_ADMO", "LRS_SUBCLASS", "FMEAS", "TMEAS", "NON_STATE_BEGIN_MP", "NON_STATE_END_MP"]
-    selectionQuery = '''"LRS_ROUTE_PREFIX" in ('R', 'M') AND FMEAS IS NULL AND TMEAS IS NULL'''
+    selectionQuery = '''"LRS_ROUTE_PREFIX" in ('L') AND FMEAS IS NULL AND TMEAS IS NULL'''
     newCursor = daUpdateCursor(fcAsFeatureLayer, updateFields, selectionQuery)
     for cursorRow in newCursor:
         editRow = list(cursorRow)
@@ -1293,7 +1631,7 @@ def KDOTKeyCalculation():
     #-9 Parse the fields for RAMPS
     # Use an update cursor to set several fields at once:
     updateFields = ["KDOT_LRS_KEY", "LRS_COUNTY_PRE", "LRS_ROUTE_NUM", "LRS_ROUTE_NUM1", "LRS_UNIQUE_IDENT", "LRS_UNIQUE_IDENT1", "LRS_ADMO", "FMEAS"]
-    selectionQuery = '''"LRS_ROUTE_PREFIX" in ('R', 'M') AND FMEAS IS NULL AND TMEAS IS NULL'''
+    selectionQuery = '''"LRS_ROUTE_PREFIX" in ('X') AND FMEAS IS NULL AND TMEAS IS NULL'''
     newCursor = daUpdateCursor(fcAsFeatureLayer, updateFields, selectionQuery)
     for cursorRow in newCursor:
         editRow = list(cursorRow)
@@ -1914,7 +2252,7 @@ def KDOT3RoutesSourceExport():
 
 def main():
     print("Starting the routes source creation process.")
-    routesSourceCreation() # Currently modified for testing.
+    routesSourceCreation()
     print("Routes source creation completed.")
 
 

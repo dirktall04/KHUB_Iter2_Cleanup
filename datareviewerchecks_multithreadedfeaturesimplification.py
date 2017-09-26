@@ -37,7 +37,7 @@ from multiprocessing import Process, Manager
 
 import datetime
 
-from pathFunctions import returnFeatureClass, returnGDBOrSDEPath
+from pathFunctions import returnFeatureClass, returnGDBOrSDEPath, returnGDBOrSDEName, returnGDBOrSDEFolder
 
 from datareviewerchecks_config import (featureSimplificationInput,
     featureSimplificationOutput,
@@ -212,7 +212,12 @@ def mainProcessFeatureSimplification(inputFeatures, maxCount, outputFeatures):
     
     # Need the gdb and fc name here from outputFeatures.
     outGDB = returnGDBOrSDEPath(outputFeatures)
+    outGDBName = returnGDBOrSDEName(outGDB)
+    outGDBFolder = returnGDBOrSDEFolder(outGDB)
     outFCName = returnFeatureClass(outputFeatures)
+    
+    if not Exists(outGDB):
+        CreateFileGDB_management(outGDBFolder, outGDBName)
     
     # Use the inputFeatures as a template.
     CreateFeatureclass_management(outGDB, outFCName, "", inputFeatures)
