@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# datareviewerchecks_kdotprocessimprovements_iter2.py
+# datareviewerchecks_kdotprocessimprovements_iter3.py
 # -*- coding: utf-8 -*-
 # Created 2017-01-11, by dirktall04
 # Updated 2017-01-27, by dirktall04
@@ -12,6 +12,11 @@
 # Updated 2017-09-07, by dirktall04
 # Updated 2017-09-12, by dirktall04
 # Updated 2017-09-12, by dirktall04
+# Adapted from datareviewerchecks_kdotprocessimprovements_iter2.py on 2017-11-01
+# Adaptation includes the removal of the dissolves as they take a while and
+# do not seem to be particularly beneficial. In particular, they make it more
+# difficult for there to be a transparent chain of actions between the manual
+# edits that have taken place and the output that is produced.
 
 # Still need to investigate why there are large areas that didn't calculate a local key.
 # Several of them are KDOT Rejected or Private, or Other, but some have Local Funclass
@@ -35,7 +40,7 @@ from arcpy import (AddField_management, AddIndex_management, AddJoin_management,
     Append_management, CalculateField_management, CopyFeatures_management,
     CreateFileGDB_management, DeleteFeatures_management,
     Delete_management, DefineProjection_management, Describe,
-    Dissolve_management, env, Exists, ##FeatureVerticesToPoints_management,
+    env, Exists, Dissolve_management, ##FeatureVerticesToPoints_management,
     FieldInfo, FieldMap, FieldMappings, FlipLine_edit, GetCount_management,
     GetMessages, ListFields, MakeFeatureLayer_management,
     Merge_management, RepairGeometry_management, RemoveIndex_management,
@@ -58,13 +63,11 @@ from datareviewerchecks_config import (reviewerSessionGDBFolder,
     rampReplacementToUse, rampReplacementOptions,
     rampsOutputFC, rampsOutputFullPath, dissolveErrorsFile,
     dissolvedFlippedOutput, dissolveOutFC, KDOTRouteId,
-    KDOTMeasBeg, KDOTMeasEnd, rampsBeginMeasure, rampsEndMeasure)
+    KDOTMeasBeg, KDOTMeasEnd, rampsBeginMeasure, rampsEndMeasure, fcWithFieldsToRecalculate)
 
 
 env.overwriteOutput = True
-inputCenterlinesSR = Describe(inputCenterlines).spatialReference
-env.outputCoordinateSystem = inputCenterlinesSR
-env.workspace = returnGDBOrSDEPath(routesSourceFCOne)
+inputCenterlinesSR = None # Initialization only
 
 # For the spatial sort used in the LRS_Unique_Local_Routes file, experiment with both
 # the 'LL' and the 'PEANO' (Peano curve algorithm) options to see which gives a better
@@ -89,6 +92,11 @@ def routesSourceCreation():
     # instead of each creating one for their own use and the next one
     # having to chain on top of that.
     
+    global inputCenterlinesSR
+    inputCenterlinesSR    = Describe(inputCenterlines).spatialReference
+    env.outputCoordinateSystem = inputCenterlinesSR
+    env.workspace = returnGDBOrSDEPath(routesSourceFCOne)
+    
     KDOTSourceDataInit()
     if rampReplacementToUse == rampReplacementOptions[0]: # 'hpms'
         KDOTRampReplacement_Update_HPMS()
@@ -96,7 +104,7 @@ def routesSourceCreation():
         KDOTRampReplacement_Update()
     elif rampReplacementToUse == rampReplacementOptions[2]: # 'none'
         KDOTRampReplacement_None()
-
+    
     
     if fieldLogicToUse == fieldLogicToUseOptions[0]:
         # This resolves the issue of the KDOT_LRS_KEY field not updating with changes to its components.
@@ -114,7 +122,12 @@ def routesSourceCreation():
     #KDOTOverlappingRoutesFix() #Replaced by the next two processes.
     # If the KDOTFlipProcessing function completes, then (re)start from here.
     
+    #### Turned this back on due to an increase in RH_NonMonotonic Check Errors.
     KDOTOverlappingRoutesDissolveFix()
+    #Create an FC for the KDOTOverlappingRoutesFlaggingFix to use
+    #which is what it would have expected to have prepared by the
+    #KDOTOverlappigRoutesDissolveFix function.
+    ###CopyFeatures_management(flippedOutput, dissolvedFlippedOutput)
     KDOTOverlappingRoutesFlaggingFix()
     
     # Need to do source key updating from the component parts and rerun
@@ -1800,6 +1813,8 @@ def KDOTOverlappingRoutesDissolveFix():
     # Also, check again to see if it actually fixes anything.
     # If not, then don't even do it.
     # It seems like it should, but....
+    ### Edit 2017-11-01, taking this out of the script. It doesn't
+    ### seem to be helpful.
     
     # Function steps
     # 0a.) Run the garbage collector.
@@ -2063,9 +2078,20 @@ def KDOTOverlappingRoutesDissolveFix():
     CalculateField_management(fcAsFeatureLayer, KDOTMeasEnd, "!" + str(n1ToMeas) + "!", "PYTHON_9.3")
 
 
+#TODO: This currently not respecting manual ghost route flagging. Needs to be fixed ASAP.
+# Perhaps the fix is to run this once, not exclude the routes and send the routes to manual editing.
+# I.E. include it in the single RC to PRC conversion
+# Then, do not run it again after, allowing for manual editors to match their ghost route suffixes
+# with the overlap detection done here. Otherwise, a process needs to be developed to NOT flag
+# routes based on attributes when there is a spatial relationship with a route that would not be
+# flagged by this process, but which has already been flagged through a manual edit.
 def KDOTOverlappingRoutesFlaggingFix():
     # conflationCountyBoundary = r'\\gisdata\ArcGIS\GISdata\Connection_files\Conflation2012_RO.sde\Conflation.SDE.NG911\Conflation.SDE.CountyBoundary'
     # Copy the "Conflation.SDE.CountyBoundary" layer to the FGDB.
+    
+    ##TODO: Change this so that overlap status is 'G' instead of 'Z' and make sure that
+    # the 'G' and 'Z' Suffix segments are not being exported as Routes, nor are
+    # routes with an OverlapStatus of 'G' or 'Z'.
     
     if Exists(routesSourceIntermediate):
         Delete_management(routesSourceIntermediate)
@@ -2122,11 +2148,13 @@ def KDOTOverlappingRoutesFlaggingFix():
     AddIndex_management(conflationCountyBoundary, indexFieldList, stewardIndexNameCB)
     
     # Join the tables based on their "STEWARD" fields.
+    ### 2017-11-01 :TODO: Use something besides AddJoin_management as this function has shown that it can
+    ### fail silently without returning a full set of joined values, via the Accident Offset Script.
     AddJoin_management(fcAsFeatureLayerRSCFL, joinField1, conflationCountyBoundary, joinField1)
     print("Attribute indexes added and join created.")
     # Select by Attributes from said table where "CountyLRSPrefix" field == "Conflation.SDE.CountyBoundary"."KDOT_CountyNumStr" field
     # Then, reverse the selection.
-    # These are the "zombie routes".
+    # These are the "ghost routes".
     
     # ----------------------------------------------------------------------- #
     # "NOT (RoutesSource.LRS_COUNTY_PRE = CountyBoundary.KDOT_CountyNumStr)"
@@ -2181,13 +2209,11 @@ def KDOTOverlappingRoutesFlaggingFix():
     countResult = GetCount_management(fcAsFeatureLayerRSCFL)
     intCount = int(countResult.getOutput(0))
     
-    # Then, calculate the field for the Zombie Suffix.
-    print("Setting the OverlapStatus for " + str(intCount) + " records to 'Z'.")
-    expressionText = "'Z'"
+    # Then, calculate the field for the Ghost Suffix.
+    print("Setting the OverlapStatus for " + str(intCount) + " records to 'G'.")
+    expressionText = "'G'"
     CalculateField_management(fcAsFeatureLayerRSCFL, "OverlapStatus", expressionText, "PYTHON_9.3")
-    
-    # Instead of just excluding these, could calculate the LRS Key to a modified version that
-    # includes the Z.
+
 
 
 def KDOT3RoutesSourceExport():

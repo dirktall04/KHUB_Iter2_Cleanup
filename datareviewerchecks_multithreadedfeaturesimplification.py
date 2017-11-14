@@ -28,7 +28,7 @@ import arcpy.da as da
 from arcpy import (Append_management, CreateFeatureclass_management,
     CreateFileGDB_management, CopyFeatures_management,
     Delete_management, env, Exists, GetCount_management,
-    GetMessages, MakeFeatureLayer_management,
+    GetMessages, MakeFeatureLayer_management, RepairGeometry_management,
     Result, SelectLayerByAttribute_management,
     SimplifyLine_cartography)
 
@@ -70,6 +70,11 @@ def subProcessFeatureSimplification(processInfoList):
         of the processing work on its own. Also, shouldn't run
         into memory limits as easily."""
     
+    # Unfortunately, this seems to only utilize one core at at time.
+    # look at ways to fix this. Perhaps doing the necessary import
+    # in this section of the code will fix the problem.
+    from arcpy import SimplifyLine_cartography, RepairGeometry_management
+    
     folderToCreateGDBsIn = processInfoList[0]
     subprocessGDB = processInfoList[1]
     simplificationRoutine = processInfoList[2]
@@ -83,10 +88,16 @@ def subProcessFeatureSimplification(processInfoList):
     ### to write to the terminal window at once.
     
     try:
-        SimplifyLine_cartography(simplificationInput, simplificationOutput,
-        simplificationRoutine, simplificationDistance, "RESOLVE_ERRORS",
-        "KEEP_COLLAPSED_POINTS", "CHECK")
+        #SimplifyLine_cartography(simplificationInput, simplificationOutput,
+            #simplificationRoutine, simplificationDistance, "RESOLVE_ERRORS",
+            #"KEEP_COLLAPSED_POINTS", "CHECK")
         
+        # Modifies the input.
+        RepairGeometry_management(simplificationInput)
+        
+        SimplifyLine_cartography(simplificationInput, simplificationOutput,
+            simplificationRoutine, simplificationDistance, "RESOLVE_ERRORS",
+            "NO_KEEP", "CHECK")
         
     except Exception as Exception1:
         # If an error occurred, print line number and error message
@@ -95,12 +106,9 @@ def subProcessFeatureSimplification(processInfoList):
         print Exception1.message
         print "An error occurred." # Need to get the error from the arcpy object or result to figure out what's going on.
         print arcpy.GetMessages()
-    
-    
 
 
 def mainProcessFeatureSimplification(inputFeatures, maxCount, outputFeatures):
-
     # Split the input features into intermediary features:
     # Add each intermediary feature class to a list and
     # pass one feature class of the intermediary features
@@ -115,10 +123,12 @@ def mainProcessFeatureSimplification(inputFeatures, maxCount, outputFeatures):
     # debug print
     print("Counted " + str(intCount) + " features in the " + inputFeatures + " feature class.")
     
-    if maxCount > 25000:
-        pass
+    if maxCount > 12000:
+        maxCount = 12000
+    elif maxCount < 2000:
+        maxCount = 7000
     else:
-        maxCount = 25000
+        pass
     
     neededMirrors = intCount / maxCount + 1
     
@@ -182,7 +192,7 @@ def mainProcessFeatureSimplification(inputFeatures, maxCount, outputFeatures):
     # To support running this on the slow AR60, reduce the coreCount used to try to keep
     # this script from crashing there.
     if coreCount >= 3:
-        coreCount = coreCount - 2
+        coreCount = coreCount - 1
     else:
         coreCount = 1
     

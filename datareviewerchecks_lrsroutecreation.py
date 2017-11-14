@@ -16,19 +16,20 @@ from arcpy import (AddField_management, CalculateField_management,
     FieldMap, FieldMappings, MakeFeatureLayer_management,
     Merge_management)
 
-from datareviewerchecks_config import (reviewerSessionGDBFolder,
+from datareviewerchecks_config import (
     outputRoutes, featureLayerCL_For_Start_CP, featureLayerCL_For_End_CP,
     routesSourceCenterlines, startCalibrationPoints, endCalibrationPoints,
     mergedCalibrationPoints, dissolvedCalibrationPoints,
-    mainFolder, nullable, mResolution, mTolerance)
-
-# createRoutesInputFC Variables: routesSourceCenterlines,
-# createRoutesOutputFC Variable: outputRoutes
-createRoutesInputFC = routesSourceCenterlines
-createRoutesOutputFC = outputRoutes
+    mainFolder, nullable, mResolution, mTolerance, usePrefixSetTestingAndReporting,
+    prefixSetErrorReportingDict, outerTestDict)
 
 
 def routeCreation():
+    # createRoutesInputFC Variables: routesSourceCenterlines,
+    # createRoutesOutputFC Variable: outputRoutes
+    
+    createRoutesInputFC = routesSourceCenterlines
+    createRoutesOutputFC = outputRoutes
     env.workspace = returnGDBOrSDEPath(createRoutesOutputFC)
     env.overwriteOutput = 1
     
@@ -170,8 +171,52 @@ def main():
     print('Route creation finished.')
 
 
+def mainWithPrefixSets():
+    # For now, use globals.
+    # Make into prettier/prefixSetFirst Python later, that uses
+    # dictionary values for everything, including default dictionary values
+    # for when the usePrefixSetTestingAndReporting value is false.
+    # Start a loop
+    print("Route creation loop started for the Prefix Set GDBs.")
+    for prefixKeyItem in prefixSetErrorReportingDict.keys():
+        # Then, set the necessary variables from the dict
+        # for the current prefix set in the list.
+        prefixKeyItemDict = outerTestDict[prefixKeyItem]
+        routeCreationDict = prefixKeyItemDict["routeCreationDict"]
+        global outputRoutes
+        outputRoutes = routeCreationDict["outputRoutes"]
+        global featureLayerCL_For_Start_CP
+        featureLayerCL_For_Start_CP = routeCreationDict["featureLayerCL_For_Start_CP"]
+        global featureLayerCL_For_End_CP
+        featureLayerCL_For_End_CP = routeCreationDict["featureLayerCL_For_End_CP"]
+        global routesSourceCenterlines
+        routesSourceCenterlines = routeCreationDict["routesSourceCenterlines"]
+        global startCalibrationPoints
+        startCalibrationPoints = routeCreationDict["startCalibrationPoints"]
+        global endCalibrationPoints
+        endCalibrationPoints = routeCreationDict["endCalibrationPoints"]
+        global mergedCalibrationPoints
+        mergedCalibrationPoints = routeCreationDict["mergedCalibrationPoints"]
+        global dissolvedCalibrationPoints
+        dissolvedCalibrationPoints = routeCreationDict["dissolvedCalibrationPoints"]
+        global lrsRoutesGDB
+        lrsRoutesGDB = routeCreationDict["lrsRoutesGDB"]
+        # Then, try running the routeCreation function
+        # and see if you can get the routeCreation function
+        # to work and apply it's calls correctly to the
+        # variables that you've specified.
+        
+        print("\nRoute creation started for the prefixKeyItem of: " + str(prefixKeyItem) + ".")
+        routeCreation()
+        print("Route creation completed for the prefixKeyItem of: " + str(prefixKeyItem) + ".")
+    print("Route creation loop completed for the Prefix Set GDBs.")
+
+
 if __name__ == "__main__":
-    main()
+    if usePrefixSetTestingAndReporting == True:
+        mainWithPrefixSets()
+    else:
+        main()
 
 else:
     pass

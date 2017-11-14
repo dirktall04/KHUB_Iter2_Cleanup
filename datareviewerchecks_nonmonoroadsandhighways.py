@@ -13,11 +13,11 @@ from arcpy import (CalculateField_management, CheckExtension,
 
 from pathFunctions import returnGDBOrSDEName
 
-env.overwriteOutput = True
+env.overwriteOutput = 1
 
-from datareviewerchecks_config import (mainFolder,
-    networkToReview, nonMonotonicOutputGDB,
-    nonMonotonicOutputFC)
+from datareviewerchecks_config import (mainFolder, networkToReview, nonMonotonicOutputGDB,
+    nonMonotonicOutputFC, usePrefixSetTestingAndReporting, prefixSetErrorReportingDict, outerTestDict)
+
 
 def roadsNonMonoCheck():
     try:
@@ -42,8 +42,11 @@ def roadsNonMonoCheck():
             nonMonotonicOutputGDBName = returnGDBOrSDEName(nonMonotonicOutputGDB)
             
             CreateFileGDB_management(mainFolder, nonMonotonicOutputGDBName)
+            time.sleep(1)
             
             DetectNonMonotonicRoutes_locref(networkToReview, nonMonotonicOutputFC, "Any", "F_Date", "T_Date", "SourceRouteId")
+            
+            print("The Roads & Highways Non-Monotonic routes check for " + str(networkToReview) + " has completed.\n")
             
         else:
             print('The Roads & Highways extension is not currently available.')
@@ -67,6 +70,28 @@ def roadsNonMonoCheck():
             pass
 
 
+def mainWithPrefixSets():
+    for prefixKeyItem in prefixSetErrorReportingDict.keys():
+        # Then, set the necessary variables from the dict
+        # for the current prefix set in the list.
+        prefixKeyItemDict = outerTestDict[prefixKeyItem]
+        rAndHCheckdict = prefixKeyItemDict["rAndHCheckdict"]
+        
+        global nonMonotonicOutputGDB
+        nonMonotonicOutputGDB = rAndHCheckdict["nonMonotonicOutputGDB"]
+        global nonMonotonicOutputFC
+        nonMonotonicOutputFC = rAndHCheckdict["nonMonotonicOutputFC"]
+        global networkToReview
+        networkToReview = rAndHCheckdict["networkToReview"]
+        
+        print("nonMonotonicOutputGDB: " + str(nonMonotonicOutputGDB) + ".")
+        print("nonMonotonicOutputFC: " + str(nonMonotonicOutputFC) + ".")
+        print("networkToReview: " + str(networkToReview) + ".")
+        
+        # Then, try running the reviewData function
+        roadsNonMonoCheck()
+
+
 def main():
     print('Roads & Highways Non-Monotonic Check started.')
     roadsNonMonoCheck()
@@ -74,11 +99,10 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
+    if usePrefixSetTestingAndReporting == True:
+        mainWithPrefixSets()
+    else:
         main()
-    except:
-        pass
-    finally:
-        print('Please press Enter to close.')
-        userInput = raw_input('> ')
-        print('Thanks. Closing.')
+
+else:
+    pass

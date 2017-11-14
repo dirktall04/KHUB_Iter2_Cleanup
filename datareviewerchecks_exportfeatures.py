@@ -2,8 +2,8 @@
 # -*- coding:utf-8 -*-
 #datareviewerchecks_exportfeatures.py
 # Created 2016-12-22
-# Last Updated 2017-01-30
-# by dirktall04
+# Updated 2017-01-30 by dirktall04
+# Updated 2017-11-13 by dirktall04, to add support for the CSIP features.
 
 # Use the OBJECTID field from the reviewer table
 # to select by ObjectId  in the source feature
@@ -58,7 +58,7 @@ import time
 from arcpy import (AddField_management, AddJoin_management, CopyFeatures_management,
     CreateFileGDB_management, Delete_management, Exists, env,
     GetCount_management, MakeFeatureLayer_management,
-    MakeTableView_management, SelectLayerByAttribute_management,)
+    MakeTableView_management, SelectLayerByAttribute_management)
 
 from arcpy.da import SearchCursor as daSearchCursor
 
@@ -66,7 +66,10 @@ from pathFunctions import (returnGDBOrSDEName, returnFeatureClass)
 
 from datareviewerchecks_config import (revTable, originTablesGDB, errorFeaturesGDB,
     mainFolder, errorReportCSVName, errorReportCSV, useRAndHCheck, nonMonotonicOutputFC, 
-    errorReportRowsOrder, nullable, single_part_point_errors, single_part_line_errors)
+    errorReportRowsOrder, nullable, single_part_point_errors, single_part_line_errors,
+    usePrefixSetTestingAndReporting, prefixSetErrorReportingDict, outerTestDict,
+    csip_output_gdb1, csip_ordered_report_rows, csip_unordered_report_rows)
+
 
 def formatCheckTitle(nameToBeUnderscorified):
     newName = nameToBeUnderscorified
@@ -132,6 +135,10 @@ def exportErrorsToFeatureClasses(reviewTable, originGDB, errorOutputGDB, errorOu
         print('The full path to the origin table is ' + str(completeOriginTablePath) + '.')
         tableViewName = "ReviewTable_View_" + str(originTableItem)
         originTableWhereClause = """"ORIGINTABLE" = '""" + str(originTableItem) +  """'"""
+        try:
+            Delete_management(tableViewName)
+        except:
+            pass
         MakeTableView_management(reviewTable, tableViewName, originTableWhereClause)
         
         for checkTitleItem in checkTitleList:
@@ -242,15 +249,16 @@ def exportErrorsToFeatureClasses(reviewTable, originGDB, errorOutputGDB, errorOu
     # were the full process to run.
     
     env.workspace = previousWorkspace
-    
-    reportExtensionForRAndHCheck(nonMonotonicOutputFC)
-    reportExtensionForQCGDB(single_part_point_errors, single_part_line_errors)
 
 
 def reportExtensionForRAndHCheck(featuresToCheck):
     if Exists(featuresToCheck):
         featuresName = returnFeatureClass(featuresToCheck)
         errorsFromRAndH = 'RAndHErrorsAsFeatureLayer'
+        try:
+            Delete_management(errorsFromRAndH)
+        except:
+            pass
         MakeFeatureLayer_management(featuresToCheck, errorsFromRAndH)
         errorsFromRAndHResult = GetCount_management(errorsFromRAndH)
         errorsFromRAndHCount = int(errorsFromRAndHResult.getOutput(0))
@@ -303,11 +311,121 @@ def reportExtensionForQCGDB(singlePartPointErrors, singlePartLineErrors):
         print("The Single Part output was not found.")
         print("Will not add the Single Part information to the errors report csv.")
 
+
+def reportExtensionForCSIP(csipGDBWithOutput):
+    # Create a blank line before the CSIP error counts.
+    try:
+        with open(errorReportCSV, 'a') as fHandle:
+            fHandle.write('\n')
+    except:
+        print("There was an error writing to the file.")
+    
+    csipGDBWithOutputFrequencyTable = os.path.join(csipGDBWithOutput, "SelfIntersectingRoutes_CategoryCounts")
+    if Exists(csipGDBWithOutputFrequencyTable):
+        csipCursorFields = ["SelfIntersectionType", "FREQUENCY"]
+        newCursor = daSearchCursor(csipGDBWithOutputFrequencyTable, csipCursorFields)
+        errorDescriptionAndCountDict = dict()
+        for cursorItem in newCursor:
+            if cursorItem[0] is not None and cursorItem[1] is not None:
+                errorDescriptionAndCountDict[cursorItem[0]] = cursorItem[1]
+            else:
+                print("Either the cursorItem[0] or cursorItem[1] were none.")
+                print("Will not add this cursorItem to the csip output dictionary.")
+        
+        # To get the listed error descriptions with associated counts, in order.
+        for errorDescToRecordFirst in csip_ordered_report_rows:
+            errorDescription = errorDescToRecordFirst
+            errorCount = errorDescriptionAndCountDict.get(errorDescToRecordFirst, None)
+            if errorCount is not None:
+                print("There were " + str(errorCount) + " errors features with the description of: \t" + str(errorDescription) + ".")
+                try:
+                    with open(errorReportCSV, 'a') as fHandle:
+                        fHandle.write(errorDescription + ', ' + str(errorCount) + '\n')
+                except:
+                    print("There was an error writing to the file.")
+            else:
+                print("There were 0 errors with the description of: " + str(errorDescription) + ".")
+                try:
+                    with open(errorReportCSV, 'a') as fHandle:
+                        fHandle.write(errorDescription + ', ' + '0' + '\n')
+                except:
+                    print("There was an error writing to the file.")
+        
+        complexSelfIntersectionsCount = 0
+        # To get the unlisted error descriptions with associated counts, in no particular order.
+        for errorDescription in errorDescriptionAndCountDict.keys():
+            if errorDescription not in csip_ordered_report_rows:
+                if errorDescription.find('Complex') >= 0: # Returns -1 if not found.
+                    errorCount = errorDescriptionAndCountDict[errorDescription]
+                    complexSelfIntersectionsCount += int(errorCount)
+                elif errorDescription == 'Not self-intersecting':
+                    pass
+                else:
+                    # This is an issue. Print a warning.
+                    print("Warning: The error description of '" + str(errorDescription) + "'")
+                    print("is neither in the csip_ordered_report_rows list, nor is it a Complex Self-Intersection.")
+            else:
+                pass # This should have already been recorded.
+            
+        try:
+            with open(errorReportCSV, 'a') as fHandle:
+                fHandle.write('Complex Self-Intersection' + ', ' + str(complexSelfIntersectionsCount) + '\n')
+        except:
+            print("There was an error writing to the file.")
+        
+    else:
+        print("Could not find the Output Frequency Table in the csip GDB.")
+
+
+def mainWithPrefixSets():
+    # For now, use globals.
+    # Make into prettier/prefixSetFirst Python later, that uses
+    # dictionary values for everything, including default dictionary values
+    # for when the usePrefixSetTestingAndReporting value is false.
+    # Start a loop
+    for prefixKeyItem in prefixSetErrorReportingDict.keys():
+        # Then, set the necessary variables from the dict
+        # for the current prefix set in the list.
+        prefixKeyItemDict = outerTestDict[prefixKeyItem]
+        dataReviewExportDict = prefixKeyItemDict["dataReviewExportDict"]
+        csipDict = prefixKeyItemDict["csipDict"]
+        
+        global errorReportCSVName
+        errorReportCSVName = dataReviewExportDict["errorReportCSVName"]
+        global errorReportCSV
+        errorReportCSV = dataReviewExportDict["errorReportCSV"]
+        
+        #Non-global, passed directly into the function
+        global revTable
+        revTable = dataReviewExportDict["revTable"]
+        global originTablesGDB
+        originTablesGDB = dataReviewExportDict["originTablesGDB"]
+        global errorFeaturesGDB
+        errorFeaturesGDB = dataReviewExportDict["errorFeaturesGDB"]
+        global nonMonotonicOutputFC
+        nonMonotonicOutputFC = dataReviewExportDict["nonMonotonicOutputFC"]
+        global single_part_point_errors
+        single_part_point_errors = dataReviewExportDict["single_part_point_errors"]
+        global single_part_line_errors
+        single_part_line_errors = dataReviewExportDict["single_part_line_errors"]
+        global csip_output_gdb1
+        csip_output_gdb1 = csipDict["csip_output_gdb1"]
+        
+        exportErrorsToFeatureClasses(revTable, originTablesGDB, errorFeaturesGDB, mainFolder)
+        reportExtensionForRAndHCheck(nonMonotonicOutputFC)
+        reportExtensionForQCGDB(single_part_point_errors, single_part_line_errors)
+        reportExtensionForCSIP(csip_output_gdb1)
+
+
 def main():
     print 'Error exports starting...'
     exportErrorsToFeatureClasses(revTable, originTablesGDB, errorFeaturesGDB, mainFolder)
+    reportExtensionForRAndHCheck(nonMonotonicOutputFC)
+    reportExtensionForQCGDB(single_part_point_errors, single_part_line_errors)
+    reportExtensionForCSIP(csip_output_gdb1)
     print 'Error exports complete.'
 # To get the multipart point errors, you can join the REVTABLEPOINT.LINKID to the REVTABLEMAIN.RECORDID.
+
 
 # Unrelated:
 # Need a script that won't mess up when dissolving this for this:
@@ -322,8 +440,11 @@ def main():
 #   \ || /       | /
 #    \\//        |/
 
-if __name__ == "__main__":
-    main()
 
+if __name__ == "__main__":
+    if usePrefixSetTestingAndReporting == True:
+        mainWithPrefixSets()
+    else:
+        main()
 else:
     pass

@@ -28,20 +28,23 @@ from arcpy import (CheckExtension, CheckInExtension, CheckOutExtension,
 
 from datareviewerchecks_config import (workspaceToReview,
     reviewerSessionGDBFolder, reviewerSessionGDB,
-    reviewerSession, sessionReviewerSession, reviewerBatchJob)
+    reviewerSession, sessionReviewerSession, reviewerBatchJob,
+    usePrefixSetTestingAndReporting, prefixSetErrorReportingDict,
+    outerTestDict)
 
 
 def reviewData():
     try:
-        print 'Data Reviewer batch job starting.'
-        print 'If one of the feature classes, Routes or CalPts, does not exist in the place that the'
-        print 'data reviewer batch job looks for it, then you will get an "Unknown Error".'
-        print "This can be remedied by updating the data reviewer batch job's workspace settings."
+        print("Starting the Data Reviewer batch job at:\n" + str(reviewerBatchJob) + ".")
+        print("For the data located in:\n" + str(workspaceToReview) + ".")
+        print("If one of the feature classes, Routes or CalPts, does not exist in the place that the")
+        print("data reviewer batch job looks for it, then you will get an 'Unknown Error'.")
+        print("This can be remedied by updating the data reviewer batch job's workspace settings.")
         # Test the data reviewer part:
         if CheckExtension("datareviewer") == 'Available':
-            print("Test complete.")
+            print("Extension availability check complete.")
             CheckOutExtension("datareviewer")
-
+            
             # Checking to see if the output already exists.
             # If so, remove it so that it can be recreated. -- For the errors, might need a better process, so that
             # it's possible to track where the errors were at the start and how things progressed.
@@ -59,17 +62,18 @@ def reviewData():
             EnableDataReviewer_Reviewer(reviewerSessionGDB, "#", "#", "DEFAULTS")
 
             # Create a new Reviewer session
-            CreateReviewerSession_Reviewer(reviewerSessionGDB, reviewerSession, "#")
-
+            ##CreateReviewerSession_Reviewer (reviewer_workspace, session_name, {session_template}, {duplicate_checking}, {store_geometry}, {username}, {version})
+            CreateReviewerSession_Reviewer(reviewerSessionGDB, reviewerSession, "", "NONE", "STORE_GEOMETRY")
+            
             # execute the batch job
             batchJobResult = ExecuteReviewerBatchJob_Reviewer(reviewerSessionGDB, sessionReviewerSession, reviewerBatchJob, workspaceToReview)
 
-            print "Data Reviewer batch job complete."
+            print("Data Reviewer batch job complete.")
 
             # get the output table view from the result object
             outputTable = batchJobResult.getOutput(0)
 
-            print "The output table is called " + str(outputTable.name) + "." # prints REVBATCHRUNTABLE
+            print("The output table is called " + str(outputTable.name) + ".") # prints REVBATCHRUNTABLE
 
             CheckInExtension("datareviewer")
         
@@ -91,12 +95,42 @@ def reviewData():
         CheckInExtension("datareviewer")
 
 
+def mainWithPrefixSets():
+    # For now, use globals.
+    # Make into prettier/prefixSetFirst Python later, that uses
+    # dictionary values for everything, including default dictionary values
+    # for when the usePrefixSetTestingAndReporting value is false.
+    # Start a loop
+    for prefixKeyItem in prefixSetErrorReportingDict.keys():
+        # Then, set the necessary variables from the dict
+        # for the current prefix set in the list.
+        prefixKeyItemDict = outerTestDict[prefixKeyItem]
+        dataReviewerDict = prefixKeyItemDict["dataReviewerDict"]
+        
+        global workspaceToReview
+        workspaceToReview = dataReviewerDict["workspaceToReview"]
+        global reviewerSessionGDB
+        reviewerSessionGDB = dataReviewerDict["reviewerSessionGDB"]
+        global reviewerSession
+        reviewerSession = dataReviewerDict["reviewerSession"]
+        global sessionReviewerSession
+        sessionReviewerSession = dataReviewerDict["sessionReviewerSession"]
+        global reviewerBatchJob
+        reviewerBatchJob = dataReviewerDict["reviewerBatchJob"]
+        
+        # Then, try running the reviewData function
+        reviewData()
+
+
 def main():    
     reviewData()
 
 
 if __name__ == "__main__":
-    main()
+    if usePrefixSetTestingAndReporting == True:
+        mainWithPrefixSets()
+    else:
+        main()
 
 else:
     pass
