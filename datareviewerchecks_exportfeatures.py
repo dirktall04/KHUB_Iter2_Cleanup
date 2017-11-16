@@ -4,6 +4,7 @@
 # Created 2016-12-22
 # Updated 2017-01-30 by dirktall04
 # Updated 2017-11-13 by dirktall04, to add support for the CSIP features.
+# Updated 2017-11-15 by dirktall04
 
 # Use the OBJECTID field from the reviewer table
 # to select by ObjectId  in the source feature
@@ -344,7 +345,7 @@ def reportExtensionForCSIP(csipGDBWithOutput):
                 except:
                     print("There was an error writing to the file.")
             else:
-                print("There were 0 errors with the description of: " + str(errorDescription) + ".")
+                print("There were 0 errors with the description of: \t" + str(errorDescription) + ".")
                 try:
                     with open(errorReportCSV, 'a') as fHandle:
                         fHandle.write(errorDescription + ', ' + '0' + '\n')
@@ -425,20 +426,6 @@ def main():
     reportExtensionForCSIP(csip_output_gdb1)
     print 'Error exports complete.'
 # To get the multipart point errors, you can join the REVTABLEPOINT.LINKID to the REVTABLEMAIN.RECORDID.
-
-
-# Unrelated:
-# Need a script that won't mess up when dissolving this for this:
-#     SB         NB
-#    //\\        |\
-#   / || \       | \
-#  /  ||  \      | |
-#  |  ||  |      | |
-#  |  ||  |      | |
-#  |  ||  |      | |
-#  \  ||  /      | |
-#   \ || /       | /
-#    \\//        |/
 
 
 if __name__ == "__main__":

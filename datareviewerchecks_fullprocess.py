@@ -141,13 +141,22 @@ def main():
             exportthefeatures.main()
         else:
             print("Not exporting the error features because the exportFeatures setting for errors is False.")
-        
-        
+    
+    
+    settingsToReportList = ['inputCenterlines', 'routeSourceCreationOption', 'rampReplacementToUse', 'fieldLogicToUse', 'usePrefixSetTestingAndReporting', 'recreateTheRoutes',
+        'runDataReviewerChecks', 'useRAndHCheck', 'createQCGDB', 'runClassifySelfIntersectingPolylines', 'exportFeatures']
     print('Full process completed')
     completeTime = datetime.datetime.now()
     print('at approximately: ' + str(completeTime))
     durationTime = completeTime - startTime
     print('and taking ' + str(durationTime))
+    print('Using the following settings: ')
+    for settingToReportOn in settingsToReportList:
+        if (settingToReportOn in dir(configsettings)):
+            print(str(settingToReportOn) + ": " + str(getattr(configsettings, str(settingToReportOn))))
+        else:
+            pass
+    settingsToDisplayInConsole = [configsettings.usePrefixSetTestingAndReporting]
     print('The completed GDBs can be found in ' + str(configsettings.mainFolder) + '.')
 
 

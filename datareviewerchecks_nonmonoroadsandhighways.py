@@ -2,9 +2,11 @@
 # -*- coding:utf-8 -*-
 # datareviewerchecks_nonmonoroadsandhighways.py
 # Created 2016-01-04
-# Last Updated 2017-01-27 by dirktall04
+# Updated 2017-01-27 by dirktall04
+# Updated 2017-11-15 by dirktall04
 
 
+import time
 from arcpy import (CalculateField_management, CheckExtension,
     CheckInExtension, CheckOutExtension, CreateFileGDB_management,
     Delete_management, env, Exists)
