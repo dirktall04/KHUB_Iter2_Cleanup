@@ -45,12 +45,13 @@ def main():
     print('next running the data reviewer checks from ' + str(configsettings.reviewerBatchJob))
     print('and exporting the error features to ' + str(configsettings.errorFeaturesGDB))
     print('at: ' + str(startTime))
-    if configSettings.recalculateKeysFromComponents == True:
+    
+    if configsettings.recalculateKeysInDailyProcess == True:
         keyrecalculation_keyupdatesfromcomponents.main()
     else:
-        print("configSettings.recalculateKeysFromComponents is not set to True.")
+        print("configsettings.recalculateKeysInDailyProcess is not set to True.")
         print("Not relcalculating LRS Keys from their component fields.")
-    if configSettings.pullDataFromServerToRunDailyTests == True:
+    if configsettings.pullDataFromServerToRunDailyTests == True:
         pulldatafromservertorundailytests.main()
     else:
         print("configsettings.pullDataFromServerToRunDailyTests is not set to True.")
@@ -78,6 +79,8 @@ def main():
             loganprocessadditions.mainWithPrefixSets()
         else:
             print('Skipping route creation.')
+            print("To do Logan's process manually, please set the")
+            print('usePrefixSetTestingAndReporting variable to false.')
         # New
         if configsettings.runDataReviewerChecks == True:
             ### Can't create .rbj from template due to hashed values with unknown algorithm in .rbj files. ###
@@ -112,19 +115,26 @@ def main():
     else:
         print("The usePrefixSetTestingAndReporting setting is False.")
         print("Will perform single checks rather than using all of the prefix sets.")
-        # New
-        if configsettings.useLoganProcessAdditions == True:
-            print("Approximating Logan's process additions in code.")
-            print("This does not yet perform functions that deal with riding routes.")
-            loganprocessadditions.main()
         
         if configsettings.recreateTheRoutes == True:
             time.sleep(25)
             print('Recreating the LRS Routes from the routesSource.')
             createtheroutes.main()
+        # New
+        elif configsettings.useLoganProcessAdditions == True:
+            print("Attempted replication of Logan's process additions in code.")
+            print("This section of code has not received extensive testing.")
+            print("It may be buggy.")
+            print("If that is the case, please disable it until it can be fixed.")
+            loganprocessadditions.main()
         else:
             print('Skipping route creation.')
-            pass
+            print('This is the correct workflow if you wish to do the steps in the')
+            print('K-Hub Iteration 2 Source Route Creation Process 2017-10-31 manually')
+            print('just make sure that the final route output matches the value in the')
+            print('outputRoutes variable: ' + str(outputRoutes) + '.')
+            print('and that the final CalPts output matches the location in the')
+            print('dissolvedCalibrationPoints variable: ' + str(dissolvedCalibrationPoints) + '.')
         if configsettings.runDataReviewerChecks == True:
             ### Can't create .rbj from template due to hashed values with unknown algorithm in .rbj files. ###
             ###rbjxmlcreation.main()
@@ -153,7 +163,7 @@ def main():
             print("Not exporting the error features because the exportFeatures setting for errors is False.")
     
     #New
-    if configSettings.moveErrorsForEditSupport == True:
+    if configsettings.moveErrorsForEditSupport == True:
         moveerrorsforeditsupport.main()
     else:
         print("configsettings.moveErrorsForEditSupport is not set to True.")

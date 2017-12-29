@@ -8,6 +8,7 @@ from arcpy import (CopyFeatures_management, Delete_management, Exists)
 
 
 def main():
+    print("Starting the process of copying centerlines from the server to run daily tests.")
     if Exists(inputCenterlines):
         try:
             Delete_management(inputCenterlines)

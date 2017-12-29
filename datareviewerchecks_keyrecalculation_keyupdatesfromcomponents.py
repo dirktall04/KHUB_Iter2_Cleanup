@@ -31,10 +31,10 @@ def main():
         editSession.startOperation()
         
         recalculateKeyValues()
-        edit.stopOperation()
+        editSession.stopOperation()
 
         # Stop the edit session and save the changes
-        edit.stopEditing(True)
+        editSession.stopEditing(True)
     else:
         MakeFeatureLayer_management(fcWithFieldsToRecalculate, fcAsFeatureLayer)
         recalculateKeyValues()

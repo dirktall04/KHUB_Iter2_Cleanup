@@ -12,8 +12,7 @@ from arcpy import (AddField_management, CalculateField_management,
     FieldMap, FieldMappings, MakeFeatureLayer_management,
     Merge_management)
 
-from datareviewerchecks_config import (
-    outputRoutes,
+from datareviewerchecks_config import (outputRoutes,
     featureLayerCL_For_Start_CP, featureLayerCL_For_End_CP,
     routesSourceCenterlines, startCalibrationPoints, endCalibrationPoints,
     mergedCalibrationPoints, dissolvedCalibrationPoints,
@@ -27,7 +26,7 @@ from datareviewerchecks_config import (
     routesSourceCountyLRSArnoldFromMeasure, routesSourceCountyLRSArnoldToMeasure, 
     unprunedAttributesRoadCenterlinesName, unprunedAttributesRoadCenterlines, 
     unprunedAttributesRoadCenterlinesRouteID, preRouteSourceCRMLFields, preRouteSourceCRMLName, 
-    preRouteSourceCRML, stateRoutesAndNullRouteIDsSelectionQuery, stateRoutesAndNullRouteIDsName, 
+    preRouteSourceCRML, stateRoutesAndNullRouteIDsName, 
     fcAsFeatureLayerLG, fcAsFeatureLayerLG2, scratchFC, scratchFC2, scratchFC3, NEW_SELECTION_CONST)
 
 
