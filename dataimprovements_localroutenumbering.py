@@ -450,6 +450,7 @@ def polylineStartEndPointsMatch(firstFeature, secondFeature, epsilonValue):
     
     return testResult
 
+
 def addDistanceAndSort(inputList, geometryColumnLocation):
     ## Calculate a point which is further south and west than any of the other points.
     ## Calculate the distance from each feature to this point. Store the distance in each feature.

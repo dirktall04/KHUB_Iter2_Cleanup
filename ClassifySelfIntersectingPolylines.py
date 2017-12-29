@@ -20,23 +20,17 @@ py = "PYTHON_9.3"
 convexity_area_ratio_threshold = 20
 straight_deviation = 3
 
-try:
-    from config import(csip_fc1 as fc1,
-                        csip_route_id_fld1 as route_id_fld1,
-                        csip_output_gdb1 as output_gdb1)
-    print("The csip_* variables were imported from the config file successfully.")
-except:
-    print("Could not import the csip_* variables from the config file. Setting them to the default values.")
-    # input parameters
-    fc1 = r'E:\lerikson\KDOT2\Iteration2\Migration\SourceRoutesRH.gdb\Source' #arcpy.GetParameterAsText(0)
-    route_id_fld1 = "RouteId" #arcpy.GetParameterAsText(1)
-    output_gdb1 = 'E:\lerikson\KDOT2\Iteration2\Migration\Errors.gdb' #arcpy.GetParameterAsText(2)
-
 
 def main():
     # other prep statements
     arcpy.env.overwriteOutput = True
-    AnalyzePolylines(fc1, route_id_fld1, output_gdb1)
+
+    # input parameters
+    fc = r'E:\lerikson\KDOT2\Iteration2\Migration\SourceRoutesRH.gdb\Source' #arcpy.GetParameterAsText(0)
+    route_id_fld = "RouteId" #arcpy.GetParameterAsText(1)
+    output_gdb = 'E:\lerikson\KDOT2\Iteration2\Migration\Errors.gdb' #arcpy.GetParameterAsText(2)
+
+    AnalyzePolylines(fc, route_id_fld, output_gdb)
 
 
 def AnalyzePolylines(fc, route_id_fld, output_gdb):

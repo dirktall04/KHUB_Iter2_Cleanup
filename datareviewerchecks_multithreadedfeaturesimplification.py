@@ -39,10 +39,10 @@ import datetime
 
 from pathFunctions import returnFeatureClass, returnGDBOrSDEPath, returnGDBOrSDEName, returnGDBOrSDEFolder
 
-from datareviewerchecks_config import (featureSimplificationInput,
+from datareviewerchecks_onetimeprocess_config import (featureSimplificationInput,
     featureSimplificationOutput,
     mainFolder, maxFeatures, mirrorBaseName, 
-    simplifyAlgorithm, simplifyDistance)
+    simplifyAlgorithm, simplifyDistance, useMultithreading)
 
 simplifyInputName = 'simplificationInput'
 simplifyOutputName = 'simplificationOutput'
@@ -123,8 +123,8 @@ def mainProcessFeatureSimplification(inputFeatures, maxCount, outputFeatures):
     # debug print
     print("Counted " + str(intCount) + " features in the " + inputFeatures + " feature class.")
     
-    if maxCount > 12000:
-        maxCount = 12000
+    if maxCount > 15000:
+        maxCount = 15000
     elif maxCount < 2000:
         maxCount = 7000
     else:
@@ -191,25 +191,35 @@ def mainProcessFeatureSimplification(inputFeatures, maxCount, outputFeatures):
     
     # To support running this on the slow AR60, reduce the coreCount used to try to keep
     # this script from crashing there.
-    if coreCount >= 3:
+    if coreCount >= 3 and useMultithreading == True:
         coreCount = coreCount - 1
+        
+        print("Starting a multi-threaded job which will use (up to) " + str(coreCount) + " cores at once.")
+        
+        workPool = mp.Pool(processes=coreCount)
+        # Note: This is a different usage of the word map than the one generally used in GIS.
+        workPool.map(subProcessFeatureSimplification, infoForSubprocess)
+        print("Multi-threaded job's done!")
+        
+        print("Waiting a few moments before closing down the worker processes...")
+        time.sleep(20)
+        workPool.close()
+        time.sleep(20)
+        workPool.join()
+        
+        print("Worker processes closed.")
+        
     else:
-        coreCount = 1
-    
-    print("Starting a multi-threaded job which will use (up to) " + str(coreCount) + " cores at once.")
-    
-    workPool = mp.Pool(processes=coreCount)
-    # Note: This is a different usage of the word map than the one generally used in GIS.
-    workPool.map(subProcessFeatureSimplification, infoForSubprocess)
-    print("Multi-threaded job's done!")
-    
-    print("Waiting a few moments before closing down the worker processes...")
-    time.sleep(20)
-    workPool.close()
-    time.sleep(20)
-    workPool.join()
-    
-    print("Worker processes closed.")
+        # Don't use multithreading here.
+        print("Using the single threaded process for feature simplification.")
+        print("This will be slower than the multi-threaded version,")
+        print("but it should also be less likely to crash on slower machines")
+        print("or those with low core counts.")
+        for singleThreadedProcessInfoListItem in infoForSubprocess:
+            singleThreadedProcessForSlowMachines(singleThreadedProcessInfoListItem)
+        
+        print("Waiting a few moments before continuing to the next part of the script...")
+        time.sleep(20)
     
     # Delete the output target prior to recreating it and appending data into it.
     if Exists(outputFeatures):
@@ -257,6 +267,45 @@ def mainProcessFeatureSimplification(inputFeatures, maxCount, outputFeatures):
                 pass
         except:
             pass
+
+
+def singleThreadedProcessForSlowMachines(processInfoList):
+    """ Singleprocessing version of feature simplification. 
+        Uses a single core to simplify features. Should be
+        less prone to crashing on slow machines and
+        low core-count servers."""
+    
+    folderToCreateGDBsIn = processInfoList[0]
+    subprocessGDB = processInfoList[1]
+    simplificationRoutine = processInfoList[2]
+    simplificationDistance = processInfoList[3]
+    simplificationInput = os.path.join(subprocessGDB, simplifyInputName)
+    simplificationOutput = os.path.join(subprocessGDB, simplifyOutputName)
+    
+    ### Improvement: All of the print statements in this need to be
+    ### messages passed to the main function so that there are
+    ### not situations where more than one subfunction is attempting
+    ### to write to the terminal window at once.
+    
+    try:
+        #SimplifyLine_cartography(simplificationInput, simplificationOutput,
+            #simplificationRoutine, simplificationDistance, "RESOLVE_ERRORS",
+            #"KEEP_COLLAPSED_POINTS", "CHECK")
+        
+        # Modifies the input.
+        RepairGeometry_management(simplificationInput)
+        
+        SimplifyLine_cartography(simplificationInput, simplificationOutput,
+            simplificationRoutine, simplificationDistance, "RESOLVE_ERRORS",
+            "NO_KEEP", "CHECK")
+        
+    except Exception as Exception1:
+        # If an error occurred, print line number and error message
+        tb = sys.exc_info()[2]
+        print "Line %i" % tb.tb_lineno
+        print Exception1.message
+        print "An error occurred." # Need to get the error from the arcpy object or result to figure out what's going on.
+        print arcpy.GetMessages()
 
 
 def main():

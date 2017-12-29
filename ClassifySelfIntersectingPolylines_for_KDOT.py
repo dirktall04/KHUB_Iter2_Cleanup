@@ -114,6 +114,7 @@ def AnalyzePolylines(fc, route_id_fld, output_gdb):
     fc_name = os.path.basename(fc)
     if fc_name[-4:] == ".shp":
         fc_name = fc_name[:-4]
+    fc_F2L_InMem = os.path.join("in_memory", fc_name + "_F2L")
     fc_F2L = os.path.join(output_gdb, fc_name + "_F2L")
     
     # fc_Diss name modification
@@ -123,7 +124,10 @@ def AnalyzePolylines(fc, route_id_fld, output_gdb):
         fc_Diss = os.path.join(output_gdb, fc_name + "_SelfIntClassification" + "_" + prefixKeyString)
     
     arcpy.AddMessage("Executing Feature To Line...")
-    arcpy.FeatureToLine_management(fc, fc_F2L)
+	
+    #arcpy.FeatureToLine_management(fc, fc_F2L)
+    arcpy.FeatureToLine_management(fc, fc_F2L_InMem)
+    arcpy.CopyFeatures_management(fc_F2L_InMem, fc_F2L)
     arcpy.AddMessage("Executing Dissolve...")
     arcpy.Dissolve_management(fc_F2L, fc_Diss, route_id_fld)
     

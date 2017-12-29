@@ -13,20 +13,14 @@
 # Updated 2017-09-12, by dirktall04
 # Updated 2017-09-12, by dirktall04
 # Adapted from datareviewerchecks_kdotprocessimprovements_iter2.py on 2017-11-01
-# Adaptation includes the removal of the dissolves as they take a while and
-# do not seem to be particularly beneficial. In particular, they make it more
-# difficult for there to be a transparent chain of actions between the manual
-# edits that have taken place and the output that is produced.
+# Updated 2017-12-26, by dirktall04
+# Updated 2017-12-27, by dirktall04
 
 # Still need to investigate why there are large areas that didn't calculate a local key.
 # Several of them are KDOT Rejected or Private, or Other, but some have Local Funclass
 # LRS Key and a null KDOTLRSKey.
 
-# This currently does not set any routes to 'G' suffix. It does, however, populate OverlapStatus with 'Z'.
-
-# Add a config item to allow for bypassing the addition of ramps so that it's
-# possible to specify checks of individual prefixes that do not include the
-# ramp features.
+# This currently does not set any routes to 'G' suffix. It does, however, populate OverlapStatus with 'G'.
 
 import gc
 import os
@@ -51,53 +45,44 @@ from arcpy.da import InsertCursor as daInsertCursor, UpdateCursor as daUpdateCur
 
 import datareviewerchecks_multithreadedfeaturesimplification as featuresimplification
 
-from datareviewerchecks_config import (reviewerSessionGDBFolder,
+# Current implementation locked to the new config.
+# Reverting to the non-onetimeprocess_config is strongly *not* recommended.
+# That config belongs to the daily_process now.
+from datareviewerchecks_onetimeprocess_config import (
     inputCenterlines, interchangeRampFC, interchangeRampFCRepairCopy,
-    outputRoutes, featureLayerCL_For_Start_CP, featureLayerCL_For_End_CP,
     routesSourceCenterlines, routesSourceFCOne, fcAsFeatureLayer, mainFolder,
     nullable, gdbForProcessing, featureSimplificationOutput, inMemModifiedData,
     conflationCountyBoundary, stewardIndexNameCB, stewardIndexNameRSC,
     routesSourceIntermediate, flippedOutput,
     routesSource1, routesSource2, routesSource3, n1RouteId, 
-    n1FromMeas, n1ToMeas, rampsOutputGDB, fieldLogicToUse, fieldLogicToUseOptions,
+    n1FromMeas, n1ToMeas, rampsOutputGDB,
     rampReplacementToUse, rampReplacementOptions,
     rampsOutputFC, rampsOutputFullPath, dissolveErrorsFile,
     dissolvedFlippedOutput, dissolveOutFC, KDOTRouteId,
-    KDOTMeasBeg, KDOTMeasEnd, rampsBeginMeasure, rampsEndMeasure, fcWithFieldsToRecalculate)
+    KDOTMeasBeg, KDOTMeasEnd, rampsBeginMeasure, rampsEndMeasure,
+    useDissolveOnRoadCenterlines)
 
 
 env.overwriteOutput = True
 inputCenterlinesSR = None # Initialization only
 
-# For the spatial sort used in the LRS_Unique_Local_Routes file, experiment with both
-# the 'LL' and the 'PEANO' (Peano curve algorithm) options to see which gives a better
-# result for the sorting. - Might also be worth including the road label in the sort
-# just after the spatial option.
-# Do a selection by road name + road type suffix instead of what it's currently doing rather than
-# just a sort. Should try to get all of the Main St segments that are contiguous
-# to have the same LRS Key, but give them different LRS Keys where non-contiguous
-# and where the road type suffix changes,
-# i.e. Main St and Main Dr are different but all of the contigous pieces for
-# one should have the same LRS Key, and the same for the other, so that if
-# they are the only Main St and Main Dr in the county, then there are only
-# 2 different LRS Keys between them.
 
-
-def routesSourceCreation():
+def arnoldCenterlinesProcessing():
     ''' Replaced RoutesSourceCenterlines with routesSourceFCOne so that I wouldn't
     be making a version of it that was important for testing/debugging, and then
     later exporting over it for the final output.'''
     
-    # Need to rework this part so that they pass the feature class back and forth
+    # Would like to rework this part so that they pass the feature class back and forth
     # instead of each creating one for their own use and the next one
     # having to chain on top of that.
     
     global inputCenterlinesSR
-    inputCenterlinesSR    = Describe(inputCenterlines).spatialReference
+    inputCenterlinesSR = Describe(inputCenterlines).spatialReference
     env.outputCoordinateSystem = inputCenterlinesSR
     env.workspace = returnGDBOrSDEPath(routesSourceFCOne)
     
     KDOTSourceDataInit()
+    # HPMS is strongly recommended.
     if rampReplacementToUse == rampReplacementOptions[0]: # 'hpms'
         KDOTRampReplacement_Update_HPMS()
     elif rampReplacementToUse == rampReplacementOptions[1]: # 'old'
@@ -105,36 +90,47 @@ def routesSourceCreation():
     elif rampReplacementToUse == rampReplacementOptions[2]: # 'none'
         KDOTRampReplacement_None()
     
+    #-------------------------------------------------------#
+    # Key Recalculation
+    #-------------------------------------------------------#
+    # This script no longer does key recalculation.
+    # That was moved to the daily process.    
     
-    if fieldLogicToUse == fieldLogicToUseOptions[0]:
-        # This resolves the issue of the KDOT_LRS_KEY field not updating with changes to its components.
-        KDOTKeyCalculation_KeyUpdatesFromComponents()
-    elif fieldLogicToUse == fieldLogicToUseOptions[1]:
-        KDOTKeyCalculation_NewFieldLogic()
-    else:
-        KDOTKeyCalculation_Update()
-    
-    
+    #-------------------------------------------------------#
+    # Feature Simplification
+    #-------------------------------------------------------#
     # Restart point, after KDOTKeyCalculation_*()
     KDOTFeatureSimplification()
     
+    #-------------------------------------------------------#
+    # Line Flip Processing
+    #-------------------------------------------------------#
+    # The keys used in the KDOTFlipProcessing function will probably
+    # need to be updated after you receive the 2017 data from GeoComm!
     KDOTFlipProcessing() #-- Probably still needs improvement to flipping logic.
     #KDOTOverlappingRoutesFix() #Replaced by the next two processes.
     # If the KDOTFlipProcessing function completes, then (re)start from here.
     
+    #-------------------------------------------------------#
+    # Line Dissolve Processing
+    #-------------------------------------------------------#
     #### Turned this back on due to an increase in RH_NonMonotonic Check Errors.
-    KDOTOverlappingRoutesDissolveFix()
-    #Create an FC for the KDOTOverlappingRoutesFlaggingFix to use
-    #which is what it would have expected to have prepared by the
-    #KDOTOverlappigRoutesDissolveFix function.
-    ###CopyFeatures_management(flippedOutput, dissolvedFlippedOutput)
+    ### Then turned it off again due to conversation with Kyle about dissolves and data correction/transparency.
+    if useDissolveOnRoadCenterlines == True:
+        KDOTOverlappingRoutesDissolveFix()
+    else:
+        # Creates an FC for the KDOTOverlappingRoutesFlaggingFix to use which is what it would
+        # have expected to have prepared by the KDOTOverlappigRoutesDissolveFix function.
+        SkipDissolveButCreateNecessaryOutput()
+    
+    #-------------------------------------------------------#
+    # Overlapping Routes Flagging
+    #-------------------------------------------------------#
     KDOTOverlappingRoutesFlaggingFix()
     
-    # Need to do source key updating from the component parts and rerun
-    # the dissolve, then rerun the feature simplification post-dissolve
-    # in case the dissolve introduces any vertices that are too
-    # close to one another.
-    
+    #-------------------------------------------------------#
+    # Routes Source FC Exports
+    #-------------------------------------------------------#
     KDOT3RoutesSourceExport()
 
 
@@ -755,146 +751,6 @@ def KDOTRampReplacement_Update():
     Delete_management(routesSourceFCOne)
 
 
-def ParseLRS_ROUTE_PREFIX(passedFeatureLayer):
-    # If LRS_ROUTE_PREFIX doesn't exist, add it.
-    # Then, populate it.
-    
-    lrsPrefixField = 'LRS_ROUTE_PREFIX'
-    
-    # Domains mess up SQL value testing. Instead of looking for a column to be
-    # equal to an 'X' you would be looking for it to be equal to a 7 or an 8.
-    # But, whereas the letter is always the same, it might not always be the
-    # same number and that's bad. -- Possibly able to get around this by
-    # knowing the domain's name and doing a domain lookup for the values that
-    # you're interested, but that method is not yet tested.
-    try:
-        RemoveDomainFromField_management(passedFeatureLayer, lrsPrefixField)
-    except:
-        print("Could not remove the domain from the '" + str(lrsPrefixField) + "' column.")
-        print("The domain or field might not have existed previously.")
-    
-    # Test for the new fields. If they're not there yet,
-    # then add them before the rest of the calculations.
-    tempDesc = Describe(passedFeatureLayer)
-    print("Parsing the LRS values in  " + returnFeatureClass(tempDesc.catalogPath) + " to figure out what the LRS_ROUTE_PREFIX should be.")
-    currentFieldObjects = tempDesc.fields
-    try:
-        del tempDesc
-    except:
-        pass
-    
-    currentFieldNames = [x.name for x in currentFieldObjects]
-    
-    print("currentFieldNames:")
-    for fieldNameItem in currentFieldNames:
-        print fieldNameItem
-    
-    fieldsNeeded = [lrsPrefixField]
-    fieldsToAdd = [x for x in fieldsNeeded if x not in currentFieldNames]
-    
-    if lrsPrefixField in fieldsToAdd:
-        AddField_management(passedFeatureLayer, lrsPrefixField, "TEXT", "", "", 1, "LRS_ROUTE_PREFIX", nullable)
-    else:
-        pass
-    
-    # Need to reparse the LRSKEY with the current LRS_ROUTE_PREFIX value (if it isn't null or empty)
-    # prior to doing all of this or you will overwrite the changes made by Tim's manual edits
-    # to the LRS_ROUTE_PREFIX field.
-    
-    if 'State_System_LRSKEY' in currentFieldNames:
-        #Parse from State_System_LRSKEY.
-        # LRS_ROUTE_PREFIX = "I"
-        selectionQuery1 = '''State_System_LRSKEY LIKE '___I%' '''
-        SelectLayerByAttribute_management(passedFeatureLayer, "NEW_SELECTION", selectionQuery1)
-        CalculateField_management (passedFeatureLayer, lrsPrefixField, "'I'", "PYTHON_9.3")
-        
-        # LRS_ROUTE_PREFIX = "U"
-        selectionQuery1 = '''State_System_LRSKEY LIKE '___U%' '''
-        SelectLayerByAttribute_management(passedFeatureLayer, "NEW_SELECTION", selectionQuery1)
-        CalculateField_management (passedFeatureLayer, lrsPrefixField, "'U'", "PYTHON_9.3")
-        
-        # LRS_ROUTE_PREFIX = "K"
-        selectionQuery1 = '''State_System_LRSKEY LIKE '___K%' '''
-        SelectLayerByAttribute_management(passedFeatureLayer, "NEW_SELECTION", selectionQuery1)
-        CalculateField_management (passedFeatureLayer, lrsPrefixField, "'K'", "PYTHON_9.3")
-        
-    elif 'Non_State_System_LRSKEY' in currentFieldNames:
-        #Parse from Non_State_System_LRSKEY.
-        # LRS_ROUTE_PREFIX = "C"
-        selectionQuery1 = '''Non_State_System_LRSKEY LIKE '___C%' '''
-        SelectLayerByAttribute_management(passedFeatureLayer, "NEW_SELECTION", selectionQuery1)
-        CalculateField_management (passedFeatureLayer, lrsPrefixField, "'C'", "PYTHON_9.3")
-        
-        # LRS_ROUTE_PREFIX = "R"
-        selectionQuery1 = '''Non_State_System_LRSKEY LIKE '___R%' '''
-        SelectLayerByAttribute_management(passedFeatureLayer, "NEW_SELECTION", selectionQuery1)
-        CalculateField_management (passedFeatureLayer, lrsPrefixField, "'R'", "PYTHON_9.3")
-        
-        # LRS_ROUTE_PREFIX = "M"
-        selectionQuery1 = '''Non_State_System_LRSKEY LIKE '___M%' '''
-        SelectLayerByAttribute_management(passedFeatureLayer, "NEW_SELECTION", selectionQuery1)
-        CalculateField_management (passedFeatureLayer, lrsPrefixField, "'M'", "PYTHON_9.3")
-        
-        # LRS_ROUTE_PREFIX = "L"
-        selectionQuery1 = '''Non_State_System_LRSKEY LIKE '___L%' '''
-        SelectLayerByAttribute_management(passedFeatureLayer, "NEW_SELECTION", selectionQuery1)
-        CalculateField_management (passedFeatureLayer, lrsPrefixField, "'L'", "PYTHON_9.3")
-        
-    elif 'Ramps_LRSKEY' in currentFieldNames:
-        selectionQuery1 = '''Ramps_LRSKEY LIKE '___X%' '''
-        SelectLayerByAttribute_management(passedFeatureLayer, "NEW_SELECTION", selectionQuery1)
-        # LRS_ROUTE_PREFIX = "X"
-        CalculateField_management (passedFeatureLayer, lrsPrefixField, "'X'", "PYTHON_9.3")
-    
-    elif 'SourceRouteId' in currentFieldNames:
-        #Parse from SourceRouteId instead of the other fields.
-        # LRS_ROUTE_PREFIX = "I"
-        selectionQuery1 = '''SourceRouteId LIKE 'I%' OR SourceRouteId LIKE '___I%' '''
-        SelectLayerByAttribute_management(passedFeatureLayer, "NEW_SELECTION", selectionQuery1)
-        CalculateField_management (passedFeatureLayer, lrsPrefixField, "'I'", "PYTHON_9.3")
-        
-        # LRS_ROUTE_PREFIX = "U"
-        selectionQuery1 = '''SourceRouteId LIKE 'U%' OR SourceRouteId LIKE '___U%' '''
-        SelectLayerByAttribute_management(passedFeatureLayer, "NEW_SELECTION", selectionQuery1)
-        CalculateField_management (passedFeatureLayer, lrsPrefixField, "'U'", "PYTHON_9.3")
-        
-        # LRS_ROUTE_PREFIX = "K"
-        selectionQuery1 = '''SourceRouteId LIKE 'K%' OR SourceRouteId LIKE '___K%' '''
-        SelectLayerByAttribute_management(passedFeatureLayer, "NEW_SELECTION", selectionQuery1)
-        CalculateField_management (passedFeatureLayer, lrsPrefixField, "'K'", "PYTHON_9.3")
-        
-        # LRS_ROUTE_PREFIX = "C"
-        selectionQuery1 = '''SourceRouteId LIKE '___C%' '''
-        SelectLayerByAttribute_management(passedFeatureLayer, "NEW_SELECTION", selectionQuery1)
-        CalculateField_management (passedFeatureLayer, lrsPrefixField, "'C'", "PYTHON_9.3")
-        
-        # LRS_ROUTE_PREFIX = "R"
-        selectionQuery1 = '''SourceRouteId LIKE '___R%' '''
-        SelectLayerByAttribute_management(passedFeatureLayer, "NEW_SELECTION", selectionQuery1)
-        CalculateField_management (passedFeatureLayer, lrsPrefixField, "'R'", "PYTHON_9.3")
-        
-        # LRS_ROUTE_PREFIX = "M"
-        selectionQuery1 = '''SourceRouteId LIKE '___M%' '''
-        SelectLayerByAttribute_management(passedFeatureLayer, "NEW_SELECTION", selectionQuery1)
-        CalculateField_management (passedFeatureLayer, lrsPrefixField, "'M'", "PYTHON_9.3")
-        
-        # LRS_ROUTE_PREFIX = "X"
-        selectionQuery1 = '''SourceRouteId LIKE '___X%' '''
-        SelectLayerByAttribute_management(passedFeatureLayer, "NEW_SELECTION", selectionQuery1)
-        CalculateField_management (passedFeatureLayer, lrsPrefixField, "'X'", "PYTHON_9.3")
-        
-        # LRS_ROUTE_PREFIX = "L"
-        selectionQuery1 = '''SourceRouteId LIKE '___L%' '''
-        SelectLayerByAttribute_management(passedFeatureLayer, "NEW_SELECTION", selectionQuery1)
-        CalculateField_management (passedFeatureLayer, lrsPrefixField, "'L'", "PYTHON_9.3")
-        
-    try:
-        AddDomainToField_management(passedFeatureLayer, "LRS_ROUTE_PREFIX", "LRS_ROUTES")
-    except:
-        print("Could not add the domain to the 'LRS_ROUTE_PREFIX' column.")
-        print("The domain or field might not have existed previously.")
-
-
 def KDOTFeatureSimplification():
 
     # Do the ghost route identification after the other processes here
@@ -936,6 +792,9 @@ def KDOTFlipProcessing():
     # All the capitals, all the time.
     selectionQuery1 = """ ((NON_STATE_FLIP_FLAG IS NOT NULL AND NON_STATE_FLIP_FLAG = 'Y') OR (STATE_FLIP_FLAG IS NOT NULL AND STATE_FLIP_FLAG = 'Y')) """
     selectionQuery2 = """ LRS_BACKWARD IS NULL OR LRS_BACKWARD = 1 OR LRS_BACKWARD = -1 """
+    # Ask John Krafft @ GeoComm what the Conf_2017_Flip_Flag is.
+    # Selection Query for the Flip flag from 2017 Conflation goes here:
+    # SelectionQuery2_2017 = """ Conf_2017_Flip_Flag = 'Y' """
     selectionQuery3 = """ """ + str(n1FromMeas) + """ > """ + str(n1ToMeas) + """ """
     
     SelectLayerByAttribute_management(fcAsFeatureLayer, "CLEAR_SELECTION")
@@ -953,12 +812,22 @@ def KDOTFlipProcessing():
     FlipLine_edit(fcAsFeatureLayer)
     returnedFcAsFeatureLayer = cursorSwapColumnValues(returnedFcAsFeatureLayer, fieldNamesToSwap, selectionQuery2)
     
+    # Flip Process the Flip flag from 2017 Conflation goes here:
+    #print("Selecting features that match the SelectionQuery2_2017 criteria: " + str(SelectionQuery2_2017) + ".")
+    #SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", SelectionQuery2_2017)
+    #print("Flipping selected features.")
+    #FlipLine_edit(fcAsFeatureLayer)
+    #returnedFcAsFeatureLayer = cursorSwapColumnValues(returnedFcAsFeatureLayer, fieldNamesToSwap, SelectionQuery2_2017)
+    #print("Feature flipping complete.")
+    
     print("Selecting features with larger " + str(n1FromMeas) + " than " + str(n1ToMeas) + ".")
     SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery3)
     print("Flipping selected features.")
     FlipLine_edit(fcAsFeatureLayer)
     returnedFcAsFeatureLayer = cursorSwapColumnValues(returnedFcAsFeatureLayer, fieldNamesToSwap, selectionQuery3)
     print("Feature flipping complete.")
+    
+    
     
     # Also test with doing the measure flipping separate from the geometry flipping.
     # Seems like that should produce more errors rather than less, however.
@@ -1006,805 +875,6 @@ def cursorSwapColumnValues(layerAsFeatureLayer, fieldValuesToSwap, selectionQuer
     time.sleep(10)
     
     return layerAsFeatureLayer
-
-
-def KDOTKeyCalculation_KeyUpdatesFromComponents():
-    print("Using the new field logic to calculate the values of the source lrs ID and measure fields.")
-    MakeFeatureLayer_management(fcWithFieldsToRecalculate, fcAsFeatureLayer)
-    # As long as the KDOT_LRS_KEY is not null, calculate from the
-    # current fields.
-    
-    # Prior to doing any of this, I added a field to cache the
-    # current KDOT_LRS_KEY to check for mistakes and recover from
-    # them if any were found.
-    
-    # Use the prefix field to decide on what action to take to update the KDOTRouteId.
-    # If the prefix is null, do nothing.
-    # If the prefix is I, U, K, create the KDOTRouteId value from the SHS component parts.
-    selectionQuery = """ "LRS_ROUTE_PREFIX" IN ('I', 'U', 'K') """
-    necessaryFields = ["LRS_COUNTY_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "KDOT_DIRECTION_CALC"]
-    dynNonNullSelectionQuery = GenerateNonNullSelectionQuery(necessaryFields)
-    fullSelectionQuery = selectionQuery + """ AND """ + dynNonNullSelectionQuery
-    
-    fieldsToUseForUpdating = ["LRS_COUNTY_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "KDOT_DIRECTION_CALC",
-        "KDOT_LRS_KEY"]
-    
-    newCursor = daUpdateCursor(fcAsFeatureLayer, fieldsToUseForUpdating, fullSelectionQuery)
-    
-    for cursorRowItem in newCursor:
-        cursorListItem = list(cursorRowItem)
-        countyPre = cursorListItem[0]
-        routePre = cursorListItem[1]
-        routeNum = cursorListItem[2]
-        routeSuf = cursorListItem[3]
-        lrsUniqueIdent = cursorListItem[4]
-        if len(lrsUniqueIdent) > 1:
-            lrsUniqueIdent = lrsUniqueIdent[-1]
-        else:
-            pass
-        directionCalc = cursorListItem[5]
-        directionText = '-EB'
-        try:
-            if int(routeNum) % 2 == 0 and int(directionCalc) == 0:
-                directionText = '-EB'
-            elif int(routeNum) % 2 == 0 and int(directionCalc) == 1:
-                directionText = '-WB'
-            elif int(routeNum) % 2 == 1 and int(directionCalc) == 0:
-                directionText = '-NB'
-            elif int(routeNum) % 2 != 1 and int(directionCalc) == 1:
-                directionText = '-SB'
-            newKey = str(countyPre) + str(routePre) + str(routeNum) + str(routeSuf) + str(lrsUniqueIdent) + directionText
-            cursorListItem[6] = newKey
-            ##print("Updating the lrs key to: " + str(newKey) + ".")
-            newCursor.updateRow(cursorListItem)
-        except:
-            try:
-                print(traceback.format_exc())
-                print("Could not calculate a new LRS_KEY for the given row.")
-                print("The row looks like this: " + str(cursorListItem) + ".")
-            except:
-                pass
-            newCursor.next()
-    
-    try:
-        del newCursor
-    except:
-        pass
-    
-    ###------------------------------------------------------------------------------------------------------------###
-    ### If the prefix is not I, U, K and not X, create the KDOTRouteID from the Non-SHS, Non-Ramp component parts. ###
-    ###------------------------------------------------------------------------------------------------------------###
-    
-    # For prefix R & M
-    selectionQuery = """ "LRS_ROUTE_PREFIX" IN ('R', 'M') """
-    necessaryFields = ["LRS_COUNTY_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_ADMO"]
-    dynNonNullSelectionQuery = GenerateNonNullSelectionQuery(necessaryFields)
-    fullSelectionQuery = selectionQuery + """ AND """ + dynNonNullSelectionQuery
-    
-    fieldsToUseForUpdating = ["LRS_COUNTY_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_ADMO",
-        "KDOT_DIRECTION_CALC", "KDOT_LRS_KEY"]
-    
-    newCursor = daUpdateCursor(fcAsFeatureLayer, fieldsToUseForUpdating, fullSelectionQuery)
-    
-    for cursorRowItem in newCursor:
-        cursorListItem = list(cursorRowItem)
-        countyPre = cursorListItem[0]
-        routePre = cursorListItem[1]
-        routeNum = cursorListItem[2]
-        routeSuf = cursorListItem[3]
-        lrsUniqueIdent = cursorListItem[4]
-        if len(lrsUniqueIdent) > 1:
-            lrsUniqueIdent = lrsUniqueIdent[-1]
-        else:
-            pass
-        lrsAdmo = cursorListItem[5]
-        directionCalc = cursorListItem[6]
-        if directionCalc is None:
-            directionCalc = '0'
-        else:
-            pass
-        try:
-            newKey = str(countyPre) + str(routePre) + str(routeNum) + str(routeSuf) + str(lrsUniqueIdent) + str(lrsAdmo) + str(directionCalc)
-            cursorListItem[7] = newKey
-            newCursor.updateRow(cursorListItem)
-        except:
-            try:
-                print(traceback.format_exc())
-                print("Could not calculate a new LRS_KEY for the given row.")
-                print("The row looks like this: " + str(cursorListItem) + ".")
-            except:
-                pass
-            newCursor.next()
-    
-    try:
-        del newCursor
-    except:
-        pass
-    
-    # For prefix C, Urban Classified, which uses LRS_URBAN_PRE.
-    selectionQuery = """ "LRS_ROUTE_PREFIX" IN ('C') """
-    necessaryFields = ["LRS_URBAN_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_ADMO"]
-    dynNonNullSelectionQuery = GenerateNonNullSelectionQuery(necessaryFields)
-    # Uses LRS_ADMO
-    ####LRS_ROUTE_NUM, LRS_ROUTE_SUFFIX, LRS_UNIQUE_IDENT, then LRS_ADMO, then 0 for inventory direction.
-    fullSelectionQuery = selectionQuery + """ AND """ + dynNonNullSelectionQuery
-    
-    fieldsToUseForUpdating = ["LRS_URBAN_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_ADMO",
-        "KDOT_DIRECTION_CALC", "KDOT_LRS_KEY"]
-    
-    newCursor = daUpdateCursor(fcAsFeatureLayer, fieldsToUseForUpdating, fullSelectionQuery)
-    
-    for cursorRowItem in newCursor:
-        cursorListItem = list(cursorRowItem)
-        urbanPre = cursorListItem[0]
-        routePre = cursorListItem[1]
-        routeNum = cursorListItem[2]
-        routeSuf = cursorListItem[3]
-        lrsUniqueIdent = cursorListItem[4]
-        if len(lrsUniqueIdent) > 1:
-            lrsUniqueIdent = lrsUniqueIdent[-1]
-        else:
-            pass
-        lrsAdmo = cursorListItem[5]
-        directionCalc = cursorListItem[6]
-        if directionCalc is None:
-            directionCalc = '0'
-        else:
-            pass
-        try:
-            newKey = str(urbanPre) + str(routePre) + str(routeNum) + str(routeSuf) + str(lrsUniqueIdent) + str(lrsAdmo) + str(directionCalc)
-            cursorListItem[7] = newKey
-            newCursor.updateRow(cursorListItem)
-        except:
-            try:
-                print(traceback.format_exc())
-                print("Could not calculate a new LRS_KEY for the given row.")
-                print("The row looks like this: " + str(cursorListItem) + ".")
-            except:
-                pass
-            newCursor.next()
-    
-    try:
-        del newCursor
-    except:
-        pass
-    
-    
-    # If the prefix is X, create the KDOTRouteID from the Ramp route component parts.
-    selectionQuery = """ "LRS_ROUTE_PREFIX" = 'X' """
-    # Doesn't make sense to require *_SUFFIX on ramps. - Just use '0' if it is null.
-    # Only 12 Ramps have non-null LRS_ROUTE_SUFFIX values. For those, it is all '0' or 'No Suffix'.
-    # If people set LRS_ROUTE_SUFFIX to 'G' or 'Z' for ramps though, that needs to be handled correctly.
-    necessaryFields = ["LRS_COUNTY_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_UNIQUE_IDENT", "LRS_ADMO"]
-    dynNonNullSelectionQuery = GenerateNonNullSelectionQuery(necessaryFields)
-    fullSelectionQuery = selectionQuery + """ AND """ + dynNonNullSelectionQuery
-    
-    fieldsToUseForUpdating = ["LRS_COUNTY_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_ADMO",
-        "KDOT_DIRECTION_CALC", "KDOT_LRS_KEY"]
-    
-    newCursor = daUpdateCursor(fcAsFeatureLayer, fieldsToUseForUpdating, fullSelectionQuery)
-    
-    for cursorRowItem in newCursor:
-        cursorListItem = list(cursorRowItem)
-        countyPre = cursorListItem[0]
-        routePre = cursorListItem[1]
-        routeNum = cursorListItem[2]
-        routeSuf = cursorListItem[3]
-        if routeSuf is None:
-            routeSuf = '0'
-        else:
-            pass
-        lrsUniqueIdent = cursorListItem[4]
-        if len(lrsUniqueIdent) > 1:
-            lrsUniqueIdent = lrsUniqueIdent[-1]
-        else:
-            pass
-        lrsAdmo = cursorListItem[5]
-        directionCalc = cursorListItem[6]
-        if directionCalc is None:
-            directionCalc = '0'
-        else:
-            pass
-        try:
-            newKey = str(countyPre) + str(routePre) + str(routeNum) + str(routeSuf) + str(lrsUniqueIdent) + str(lrsAdmo) + str(directionCalc)
-            cursorListItem[7] = newKey
-            newCursor.updateRow(cursorListItem)
-        except:
-            try:
-                print(traceback.format_exc())
-                print("Could not calculate a new LRS_KEY for the given row.")
-                print("The row looks like this: " + str(cursorListItem) + ".")
-            except:
-                pass
-            newCursor.next()
-    
-    try:
-        del newCursor
-    except:
-        pass
-    
-    # For all other prefixes.
-    selectionQuery = """ "LRS_ROUTE_PREFIX" NOT IN ('I', 'U', 'K', 'X', 'R', 'M', 'C') """
-    necessaryFields = ["LRS_COUNTY_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_ADMO"]
-    dynNonNullSelectionQuery = GenerateNonNullSelectionQuery(necessaryFields)
-    fullSelectionQuery = selectionQuery + """ AND """ + dynNonNullSelectionQuery
-    
-    fieldsToUseForUpdating = ["LRS_COUNTY_PRE", "LRS_ROUTE_PREFIX", "LRS_ROUTE_NUM", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_ADMO",
-        "KDOT_DIRECTION_CALC", "KDOT_LRS_KEY"]
-    
-    newCursor = daUpdateCursor(fcAsFeatureLayer, fieldsToUseForUpdating, fullSelectionQuery)
-    
-    for cursorRowItem in newCursor:
-        cursorListItem = list(cursorRowItem)
-        countyPre = cursorListItem[0]
-        routePre = cursorListItem[1]
-        routeNum = cursorListItem[2]
-        routeSuf = cursorListItem[3]
-        lrsUniqueIdent = cursorListItem[4]
-        if len(lrsUniqueIdent) > 1:
-            lrsUniqueIdent = lrsUniqueIdent[-1]
-        else:
-            pass
-        lrsAdmo = cursorListItem[5]
-        directionCalc = cursorListItem[6]
-        if directionCalc is None:
-            directionCalc = '0'
-        else:
-            pass
-        try:
-            newKey = str(countyPre) + str(routePre) + str(routeNum) + str(routeSuf) + str(lrsUniqueIdent) + str(lrsAdmo) + str(directionCalc)
-            cursorListItem[7] = newKey
-            newCursor.updateRow(cursorListItem)
-        except:
-            try:
-                print(traceback.format_exc())
-                print("Could not calculate a new LRS_KEY for the given row.")
-                print("The row looks like this: " + str(cursorListItem) + ".")
-            except:
-                pass
-            newCursor.next()
-    
-    try:
-        del newCursor
-    except:
-        pass
-    
-    
-    selectionQuery = """ "KDOT_LRS_KEY" IS NOT NULL """
-    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
-    # SourceRouteId = KDOT_LRS_KEY
-    CalculateField_management (fcAsFeatureLayer, n1RouteId, "!" + str(KDOTRouteId) + "!", "PYTHON_9.3")
-    # SourceFromMeasure = county_log_begin
-    CalculateField_management (fcAsFeatureLayer, n1FromMeas, "!" + str(KDOTMeasBeg) + "!", "PYTHON_9.3")
-    # SourceToMeasure = county_log_end
-    CalculateField_management (fcAsFeatureLayer, n1ToMeas, "!" + str(KDOTMeasEnd) + "!", "PYTHON_9.3")
-    selectionQuery = """ KDOT_LRS_KEY IS NOT NULL AND county_log_begin IS NULL AND county_log_end IS NULL AND (COUNTY_BEGIN_MP IS NOT NULL OR COUNTY_END_MP IS NOT NULL) """
-    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
-    countResult = GetCount_management(fcAsFeatureLayer)
-    intCount = int(countResult.getOutput(0))
-    print("After the new selection query to deal with the fact that State routes did not have their begin and end measure populated correctly, " +
-        str(intCount) + " were selected.")
-    # SourceFromMeasure = COUNTY_BEGIN_MP
-    CalculateField_management (fcAsFeatureLayer, n1FromMeas, "!COUNTY_BEGIN_MP!", "PYTHON_9.3")
-    # SourceToMeasure = COUNTY_END_MP
-    CalculateField_management (fcAsFeatureLayer, n1ToMeas, "!COUNTY_END_MP!", "PYTHON_9.3")
-
-
-def GenerateNonNullSelectionQuery(passedInFields):
-    selectionQuery = """ """
-    fieldCounter = 0
-    for fieldToUse in passedInFields:
-        if fieldCounter != 0:
-            selectionQuery += """ AND \"""" + str(fieldToUse) + """\" IS NOT NULL """
-        else:
-            selectionQuery += """ \"""" + str(fieldToUse) + """\" IS NOT NULL """
-        
-        fieldCounter += 1
-    
-    return selectionQuery
-
-
-def KDOTKeyCalculation_NewFieldLogic():
-    print("Using the new field logic to calculate the values of the source lrs ID and measure fields.")
-    MakeFeatureLayer_management(rampsOutputFullPath, fcAsFeatureLayer)
-    # As long as the KDOT_LRS_KEY is not null, calculate from the
-    # current fields.
-    
-    # For the 3rd version:
-    '''
-    n1FromMeas, n1ToMeas, rampsOutputGDB,
-    rampsOutputFC, rampsOutputFullPath, dissolveErrorsFile,
-    dissolvedFlippedOutput, dissolveOutFC, useNewFieldLogic, KDOTRouteId,
-    KDOTMeasBeg, KDOTMeasEnd
-    # Send the data to the source output fields with the correct decimal formatting.
-    expressionText1 = 'float("{0:.3f}".format(!' + str(KDOTMeasBeg) + '!))'
-    CalculateField_management(fcAsFeatureLayerForMeasuring, n1FromMeas, expressionText1, "PYTHON_9.3")
-    expressionText2 = 'float("{0:.3f}".format(!' + str(KDOTMeasEnd) + '!))'
-    CalculateField_management(fcAsFeatureLayerForMeasuring, n1ToMeas, expressionText2, "PYTHON_9.3")
-    # Reverse the data flow to correct decimals in the original fields.
-    expressionText3 = 'float("{0:.3f}".format(!' + str(n1FromMeas) + '!))'
-    CalculateField_management(fcAsFeatureLayerForMeasuring, KDOTMeasBeg, expressionText3, "PYTHON_9.3")
-    expressionText4 = 'float("{0:.3f}".format(!' + str(n1ToMeas) + '!))'
-    CalculateField_management(fcAsFeatureLayerForMeasuring, KDOTMeasEnd, expressionText4, "PYTHON_9.3")
-    '''
-    selectionQuery = """ "KDOT_LRS_KEY" IS NOT NULL """
-    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
-    # SourceRouteId = KDOT_LRS_KEY
-    CalculateField_management (fcAsFeatureLayer, n1RouteId, "!" + str(KDOTRouteId) + "!", "PYTHON_9.3")
-    # SourceFromMeasure = county_log_begin
-    CalculateField_management (fcAsFeatureLayer, n1FromMeas, "!" + str(KDOTMeasBeg) + "!", "PYTHON_9.3")
-    # SourceToMeasure = county_log_end
-    CalculateField_management (fcAsFeatureLayer, n1ToMeas, "!" + str(KDOTMeasEnd) + "!", "PYTHON_9.3")
-    selectionQuery = """ KDOT_LRS_KEY IS NOT NULL AND county_log_begin IS NULL AND county_log_end IS NULL AND (COUNTY_BEGIN_MP IS NOT NULL OR COUNTY_END_MP IS NOT NULL) """
-    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
-    countResult = GetCount_management(fcAsFeatureLayer)
-    intCount = int(countResult.getOutput(0))
-    print("After the new selection query to deal with the fact that State routes did not have their begin and end measure populated correctly, " +
-        str(intCount) + " were selected.")
-    # SourceFromMeasure = COUNTY_BEGIN_MP
-    CalculateField_management (fcAsFeatureLayer, n1FromMeas, "!COUNTY_BEGIN_MP!", "PYTHON_9.3")
-    # SourceToMeasure = COUNTY_END_MP
-    CalculateField_management (fcAsFeatureLayer, n1ToMeas, "!COUNTY_END_MP!", "PYTHON_9.3")
-
-
-def KDOTKeyCalculation_Update():
-    #FieldPopulation with selections and FieldCalculate:
-    
-    MakeFeatureLayer_management(rampsOutputFullPath, fcAsFeatureLayer)
-    
-    # This doesn't work well. Don't call it until it's been worked on more.
-    ParseLRS_ROUTE_PREFIX(fcAsFeatureLayer)
-    
-    tempDesc = Describe(fcAsFeatureLayer)
-    print("Calculating values for new LRS and measure fields in " + returnFeatureClass(tempDesc.catalogPath) + ".")
-    try:
-        del tempDesc
-    except:
-        pass
-    
-    # A better solution than parsing the LRS ROUTE PREFIX from the LRSKEY
-    # and then relying on the LRS ROUTE PREFIX to make decision about where
-    # to pull the LRSKEY from would be to just start at the LRSKEY locations...
-    
-    # -------------------- Start of old calculations. ----------------------- #
-    # Select LRS_ROUTE_PREFIX IN ('I', 'U', 'K')
-    selectionQuery = """ "LRS_ROUTE_PREFIX" IN ('I', 'U', 'K') """
-    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
-    # SourceRouteId = StateKey1
-    CalculateField_management (fcAsFeatureLayer, n1RouteId, "!StateKey1!", "PYTHON_9.3")
-    # SourceFromMeasure = STATE_BEGIN_MP
-    CalculateField_management (fcAsFeatureLayer, n1FromMeas, "!STATE_BEGIN_MP!", "PYTHON_9.3")
-    # SourceToMeasure = STATE_END_MP
-    CalculateField_management (fcAsFeatureLayer, n1ToMeas, "!STATE_END_MP!", "PYTHON_9.3")
-    
-    # Select LRS_ROUTE_PREFIX NOT IN ('I', 'U', 'K') AND LRSKEY IS NOT NULL
-    selectionQuery = """ "LRS_ROUTE_PREFIX" NOT IN ('I', 'U', 'K') AND "LRSKEY" IS NOT NULL """
-    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
-    # SourceRouteId = LRSKEY
-    CalculateField_management (fcAsFeatureLayer, n1RouteId,  "!LRSKEY!", "PYTHON_9.3")
-    # SourceFromMeasure = NON_STATE_BEGIN_MP
-    CalculateField_management (fcAsFeatureLayer, n1FromMeas, "!NON_STATE_BEGIN_MP!", "PYTHON_9.3")
-    # SourceToMeasure = NON_STATE_END_MP
-    CalculateField_management (fcAsFeatureLayer, n1ToMeas, "!NON_STATE_END_MP!", "PYTHON_9.3")
-    
-    # Select LRS_ROUTE_PREFIX IN ('C') AND LRSKEY NOT LIKE '%W0'
-    selectionQuery = """ "LRS_ROUTE_PREFIX" IN ('C') AND "LRSKEY" NOT LIKE '%W0' """
-    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
-    # SourceRouteID = left([LRSKEY], 11) & "W0"
-    # This is the VB version.
-    # Python version would be calcExpression1 = "!LRSKEY![0:11] + 'W0'"
-    calcExpression1 = 'Left([LRSKEY] ,11 ) & "W0"'
-    CalculateField_management(fcAsFeatureLayer, n1RouteId, calcExpression1, "VB")
-    
-    # --------------------- End of old calculations. ------------------------ #
-    # -------------------- Start of new calculations. ----------------------- #
-    # Local system LRSKeys should go first, before Ramps, but the local system LRSKeys
-    # need to be calculated unique prior to that and the code for that hasn't been tested.
-    
-    # Select where Ramps_LRSKey is not null or '' or ' '.
-    selectionQuery = """ "Ramps_LRSKey" IS NOT NULL AND "Ramps_LRSKey" NOT IN ('', ' ') """
-    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
-    # SourceRouteId = Ramps_LRSKey
-    CalculateField_management (fcAsFeatureLayer, n1RouteId,  "!Ramps_LRSKey!", "PYTHON_9.3")
-    # SourceFromMeasure = NON_STATE_BEGIN_MP
-    CalculateField_management (fcAsFeatureLayer, n1FromMeas, "!NON_STATE_BEGIN_MP!", "PYTHON_9.3")
-    # SourceToMeasure = NON_STATE_END_MP
-    CalculateField_management (fcAsFeatureLayer, n1ToMeas, "!NON_STATE_END_MP!", "PYTHON_9.3")
-    
-    # Select where Non_State_System_LRSKey is not null or '' or ' '.
-    selectionQuery = """ "Non_State_System_LRSKey" IS NOT NULL AND "Non_State_System_LRSKey" NOT IN ('', ' ') """
-    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
-    # SourceRouteId = Non_State_System_LRSKey
-    CalculateField_management (fcAsFeatureLayer, n1RouteId,  "!Non_State_System_LRSKey!", "PYTHON_9.3")
-    # SourceFromMeasure = NON_STATE_BEGIN_MP
-    CalculateField_management (fcAsFeatureLayer, n1FromMeas, "!NON_STATE_BEGIN_MP!", "PYTHON_9.3")
-    # SourceToMeasure = NON_STATE_END_MP
-    CalculateField_management (fcAsFeatureLayer, n1ToMeas, "!NON_STATE_END_MP!", "PYTHON_9.3")
-    
-    # Would go last as it takes precedence over any other keys, but only needed for State Measure Network System.
-    '''
-    # Select where State_System_LRSKey is not null or '' or ' '
-    selectionQuery = """ "State_System_LRSKey" IS NOT NULL AND "State_System_LRSKey" NOT IN ('', ' ') """
-    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
-    # SourceRouteId = State_System_LRSKey
-    CalculateField_management (fcAsFeatureLayer, n1RouteId, "!State_System_LRSKey!", "PYTHON_9.3")
-    # SourceFromMeasure = STATE_BEGIN_MP
-    CalculateField_management (fcAsFeatureLayer, n1FromMeas, "!STATE_BEGIN_MP!", "PYTHON_9.3")
-    # SourceToMeasure = STATE_END_MP
-    CalculateField_management (fcAsFeatureLayer, n1ToMeas, "!STATE_END_MP!", "PYTHON_9.3")
-    '''
-    
-    # Should have better information than the other fields.
-    # Select where CountyKey1 is not null or '' or ' '.
-    selectionQuery = """ "CountyKey1" IS NOT NULL AND "CountyKey1" NOT IN ('', ' ') """
-    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
-    # SourceRouteId = Non_State_System_LRSKey
-    CalculateField_management (fcAsFeatureLayer, n1RouteId,  "!CountyKey1!", "PYTHON_9.3")
-    # SourceFromMeasure = NON_STATE_BEGIN_MP
-    CalculateField_management (fcAsFeatureLayer, n1FromMeas, "!F_CNTY_1!", "PYTHON_9.3")
-    # SourceToMeasure = NON_STATE_END_MP
-    CalculateField_management (fcAsFeatureLayer, n1ToMeas, "!T_CNTY_1!", "PYTHON_9.3")
-    
-    # Get a count of the features that now have a non-null LRS key in the
-    # n1RouteId field along with non-null measures in the n1FromMeas and n1ToMeas fields.
-    selectionQuery = ''' "''' + n1RouteId + '''" IS NOT NULL AND "''' + n1RouteId + '''" NOT IN ('', ' ') '''
-    selectionQuery += ''' AND "''' + n1FromMeas + '''" IS NOT NULL AND ''' 
-    selectionQuery += ''' "''' + n1ToMeas + '''" IS NOT NULL'''
-    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
-    
-    countResult = GetCount_management(fcAsFeatureLayer)
-    intCount = int(countResult.getOutput(0))
-    print('Counted ' + str(intCount) + ' features with populated ' + str(n1RouteId) + ', ' +
-        str(n1FromMeas) +', and ' +str(n1ToMeas) + '.')
-    
-    SelectLayerByAttribute_management(fcAsFeatureLayer, "CLEAR_SELECTION")
-
-
-def KDOTKeyCalculation():
-    # Using the new method from Kyle.
-    #FieldPopulation with selections and FieldCalculate:
-    
-    # Get the code from Kyle's github - RHUG repository
-    # to calibrate the State Highway measures.
-    
-    MakeFeatureLayer_management(routesSourceIntermediate, fcAsFeatureLayer)
-    
-    try:
-        RemoveDomainFromField_management(fcAsFeatureLayer, "LRS_ROUTE_PREFIX")
-    except:
-        print("Could not remove the domain from the 'LRS_ROUTE_PREFIX' column.")
-        print("It might not have existed previously.")
-    
-    # Test for the new fields. If they're not there yet,
-    # then add them before the rest of the calculations.
-    tempDesc = Describe(fcAsFeatureLayer)
-    print("Calculating values for new LRS and measure fields in " + returnFeatureClass(tempDesc.catalogPath) + ".")
-    currentFields = tempDesc.fields
-    try:
-        del tempDesc
-    except:
-        pass
-    
-    fieldsNeeded = ['FromDate2', 'ToDate2', 'COUNTYKEY2', 'STATEKEY2']
-    fieldsToAdd = [x for x in fieldsNeeded if x not in currentFields]
-    
-    if 'FromDate2' in fieldsToAdd:
-        AddField_management(fcAsFeatureLayer, "FromDate2", "DATE", "", "", "", "FromDate2", nullable)
-    else:
-        pass
-    
-    if 'ToDate2' in fieldsToAdd:
-        AddField_management(fcAsFeatureLayer, "ToDate2", "DATE", "", "", "", "ToDate2", nullable)
-    else:
-        pass
-    
-    if 'COUNTYKEY2' in fieldsToAdd:
-        AddField_management(fcAsFeatureLayer, "COUNTYKEY2", "TEXT", "", "", 50, "COUNTYKEY2", nullable)
-    else:
-        pass
-    
-    if 'STATEKEY2' in fieldsToAdd:
-        AddField_management(fcAsFeatureLayer, "STATEKEY2", "TEXT", "", "", 50, "STATEKEY2", nullable)
-    else:
-        pass
-    
-    ###-- For the current network keys to LRS Routes for Network 1 (Source). --###
-    # Select LRS_ROUTE_PREFIX IN ('I', 'U', 'K')
-    selectionQuery = """ "LRS_ROUTE_PREFIX" IN ('I', 'U', 'K') """
-    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
-    # SourceRouteId = StateKey1
-    CalculateField_management (fcAsFeatureLayer, n1RouteId, "!StateKey1!", "PYTHON_9.3")
-    # SourceFromMeasure = STATE_BEGIN_MP
-    CalculateField_management (fcAsFeatureLayer, n1FromMeas, "!STATE_BEGIN_MP!", "PYTHON_9.3")
-    # SourceToMeasure = STATE_END_MP
-    CalculateField_management (fcAsFeatureLayer, n1ToMeas, "!STATE_END_MP!", "PYTHON_9.3")
-    
-    # Select LRS_ROUTE_PREFIX NOT IN ('I', 'U', 'K') AND LRSKEY IS NOT NULL
-    selectionQuery = """ "LRS_ROUTE_PREFIX" NOT IN ('I', 'U', 'K') AND "LRSKEY" IS NOT NULL """
-    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
-    # SourceRouteId = LRSKEY
-    CalculateField_management (fcAsFeatureLayer, n1RouteId,  "!LRSKEY!", "PYTHON_9.3")
-    # SourceFromMeasure = NON_STATE_BEGIN_MP
-    CalculateField_management (fcAsFeatureLayer, n1FromMeas, "!NON_STATE_BEGIN_MP!", "PYTHON_9.3")
-    # SourceToMeasure = NON_STATE_END_MP
-    CalculateField_management (fcAsFeatureLayer, n1ToMeas, "!NON_STATE_END_MP!", "PYTHON_9.3")
-    
-    # Select LRS_ROUTE_PREFIX IN ('C') AND LRSKEY NOT LIKE '%W0'
-    selectionQuery = """ "LRS_ROUTE_PREFIX" IN ('C') AND "LRSKEY" NOT LIKE '%W0' """
-    SelectLayerByAttribute_management(fcAsFeatureLayer, "NEW_SELECTION", selectionQuery)
-    # SourceRouteID = left([LRSKEY], 11) & "W0"
-    # This is the VB version.
-    # Python version would be calcExpression1 = "!LRSKEY![0:11] + 'W0'"
-    calcExpression1 = 'Left([LRSKEY] ,11 ) & "W0"'
-    CalculateField_management(fcAsFeatureLayer, n1RouteId, calcExpression1, "VB")
-    
-    ###-- For the networks that will be LRM->LRM'd onto. --###    
-    # Negatively numbered statements do preprocessing of the Keys needed to
-    # set parsing information for the positively numbered statements to follow.
-    ##--------------------Start of Parsing/Precalculation--------------------##
-    #-1
-    selectionQuery = '''"State_System_LRSKey" IS NOT NULL AND "KDOT_LRS_KEY" IS NULL'''
-    setExpression = "!State_System_LRSKey!"
-    CalculateField_management(fcAsFeatureLayer, "KDOT_LRS_KEY", setExpression, "PYTHON_9.3")
-    
-    #-2
-    selectionQuery = '''"Non_State_System_LRSKey" IS NOT NULL AND "KDOT_LRS_KEY" IS NULL'''
-    setExpression = "!Non_State_System_LRSKey!"
-    CalculateField_management(fcAsFeatureLayer, "KDOT_LRS_KEY", setExpression, "PYTHON_9.3")
-    
-    #-3
-    selectionQuery = '''"KDOT_LRS_KEY" IS NULL AND "Non_State_System_LRSKey" IS NULL AND "RAMPS_LRSKEY" IS NOT NULL'''
-    setExpression = "!RAMPS_LRSKEY!"
-    CalculateField_management(fcAsFeatureLayer, "KDOT_LRS_KEY", setExpression, "PYTHON_9.3")
-    
-    #-4
-    selectionQuery = '''"LRS_ROUTE_PREFIX" IS NULL'''
-    setExpression = "str(!RAMPS_LRSKEY!)[4:5]"
-    CalculateField_management(fcAsFeatureLayer, "KDOT_LRS_KEY", setExpression, "PYTHON_9.3")
-    
-    #-5 -- Parse the fields for STATE HIGHWAY SYSTEM
-    # Use an update cursor to set several fields at once:
-    updateFields = ["KDOT_LRS_KEY", "LRS_COUNTY_PRE", "LRS_ROUTE_NUM", "LRS_ROUTE_NUM1", "LRS_ROUTE_SUFFIX", "LRS_DIRECTION", "LRS_SUBCLASS", "LRS_ADMO", "LRS_UNIQUE_IDENT", "LRS_UNIQUE_IDENT1"]
-    selectionQuery = '''"LRS_ROUTE_PREFIX" in ('I', 'U', 'K')'''
-    newCursor = daUpdateCursor(fcAsFeatureLayer, updateFields, selectionQuery)
-    for cursorRow in newCursor:
-        editRow = list(cursorRow)
-        editRow[1] = editRow[0][0:3]
-        editRow[2] = editRow[0][4:9]
-        editRow[3] = editRow[0][4:9]
-        editRow[4] = editRow[0][10:11]
-        editRow[5] = editRow[0][13:15]
-        editRow[6] = None
-        editRow[7] = None
-        editRow[8] = editRow[0][11:12]
-        editRow[9] = editRow[0][11:12]
-        newCursor.updateRow(editRow)
-    try:
-        del newCursor
-    except:
-        pass
-    
-    #-6 -- Parse the fields for NON_STATE_HIGHWAYS_URBAN_CLASSIFIEDS
-    ### - Do something separately to --UPDATE THE COUNTY NUMBER IN LRS_COUNTY_PRE BY SPATIAL LOCATION - ###
-    # Use an update cursor to set several fields at once:
-    updateFields = ["KDOT_LRS_KEY", "LRS_URBAN_PRE", "LRS_ROUTE_NUM", "LRS_ROUTE_NUM1", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_UNIQUE_IDENT1", "LRS_ADMO", "LRS_SUBCLASS", "FMEAS", "TMEAS", "NON_STATE_BEGIN_MP", "NON_STATE_END_MP"]
-    selectionQuery = '''"LRS_ROUTE_PREFIX" = 'C' AND FMEAS IS NULL AND TMEAS IS NULL'''
-    newCursor = daUpdateCursor(fcAsFeatureLayer, updateFields, selectionQuery)
-    for cursorRow in newCursor:
-        editRow = list(cursorRow)
-        editRow[1] = editRow[0][0:3]
-        editRow[2] = editRow[0][4:9]
-        editRow[3] = editRow[0][4:9]
-        editRow[4] = editRow[0][10:11]
-        editRow[5] = editRow[0][11:12]
-        editRow[6] = '0' + editRow[0][13:14]
-        editRow[7] = editRow[0][14:15]
-        editRow[8] = editRow[10]
-        editRow[9] = editRow[11]
-        newCursor.updateRow(editRow)
-    try:
-        del newCursor
-    except:
-        pass
-    
-    #-7 Parse the fields for NON_STATE_HIGHWAYS Rural Secondary
-    # Use an update cursor to set several fields at once:
-    updateFields = ["KDOT_LRS_KEY", "LRS_COUNTY_PRE", "LRS_ROUTE_NUM", "LRS_ROUTE_NUM1", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_UNIQUE_IDENT1", "LRS_ADMO", "LRS_SUBCLASS", "FMEAS", "TMEAS", "NON_STATE_BEGIN_MP", "NON_STATE_END_MP"]
-    selectionQuery = '''"LRS_ROUTE_PREFIX" in ('R', 'M') AND FMEAS IS NULL AND TMEAS IS NULL'''
-    newCursor = daUpdateCursor(fcAsFeatureLayer, updateFields, selectionQuery)
-    for cursorRow in newCursor:
-        editRow = list(cursorRow)
-        editRow[1] = editRow[0][0:3]
-        editRow[2] = editRow[0][4:9]
-        editRow[3] = editRow[0][4:9]
-        editRow[4] = editRow[0][10:11]
-        editRow[5] = editRow[0][11:12]
-        editRow[6] = '0' + editRow[0][13:14]
-        editRow[7] = editRow[0][14:15]
-        editRow[8] = editRow[10]
-        editRow[9] = editRow[11]
-        newCursor.updateRow(editRow)
-    try:
-        del newCursor
-    except:
-        pass
-    
-    #-8 Parse the fields for NON_STATE_HIGHWAYS Local Roads
-    # Use an update cursor to set several fields at once:
-    updateFields = ["KDOT_LRS_KEY", "LRS_COUNTY_PRE", "LRS_ROUTE_NUM", "LRS_ROUTE_NUM1", "LRS_ROUTE_SUFFIX", "LRS_UNIQUE_IDENT", "LRS_UNIQUE_IDENT1", "LRS_ADMO", "LRS_SUBCLASS", "FMEAS", "TMEAS", "NON_STATE_BEGIN_MP", "NON_STATE_END_MP"]
-    selectionQuery = '''"LRS_ROUTE_PREFIX" in ('L') AND FMEAS IS NULL AND TMEAS IS NULL'''
-    newCursor = daUpdateCursor(fcAsFeatureLayer, updateFields, selectionQuery)
-    for cursorRow in newCursor:
-        editRow = list(cursorRow)
-        editRow[1] = editRow[0][0:3]
-        editRow[2] = editRow[0][4:9]
-        editRow[3] = editRow[0][4:9]
-        editRow[4] = editRow[0][10:11]
-        editRow[5] = editRow[0][11:12]
-        editRow[6] = '0' + editRow[0][13:14]
-        editRow[7] = editRow[0][14:15]
-        editRow[8] = editRow[10]
-        editRow[9] = editRow[11]
-        newCursor.updateRow(editRow)
-    try:
-        del newCursor
-    except:
-        pass
-    
-    #-9 Parse the fields for RAMPS
-    # Use an update cursor to set several fields at once:
-    updateFields = ["KDOT_LRS_KEY", "LRS_COUNTY_PRE", "LRS_ROUTE_NUM", "LRS_ROUTE_NUM1", "LRS_UNIQUE_IDENT", "LRS_UNIQUE_IDENT1", "LRS_ADMO", "FMEAS"]
-    selectionQuery = '''"LRS_ROUTE_PREFIX" in ('X') AND FMEAS IS NULL AND TMEAS IS NULL'''
-    newCursor = daUpdateCursor(fcAsFeatureLayer, updateFields, selectionQuery)
-    for cursorRow in newCursor:
-        editRow = list(cursorRow)
-        editRow[1] = editRow[0][0:3]
-        editRow[2] = editRow[0][4:9]
-        editRow[3] = editRow[0][4:9]
-        editRow[4] = editRow[0][9:11]
-        editRow[5] = editRow[0][9:11]
-        editRow[6] = editRow[0][11:12]
-        editRow[7] = 0
-        newCursor.updateRow(editRow)
-    try:
-        del newCursor
-    except:
-        pass
-    
-    #-10
-    selectionQuery = '''"LRS_PRIMARY_DIR" IS NULL'''
-    setExpression = "0"
-    CalculateField_management(fcAsFeatureLayer, "LRS_PRIMARY_DIR", setExpression, "PYTHON_9.3")
-    
-    #-11
-    selectionQuery = '''"FromDate" IS NULL'''
-    setExpression = "'1827-01-01'" ## Will have to check this.
-    CalculateField_management(fcAsFeatureLayer, "FromDate2", setExpression, "PYTHON_9.3")
-    
-    #-12
-    selectionQuery = '''"STATUS" IN ('Not Built', 'NOT BUILT')'''
-    setExpression = "'2020-01-01'" ## Will have to check this.
-    CalculateField_management(fcAsFeatureLayer, "FromDate2", setExpression, "PYTHON_9.3")
-    
-    #-13
-    selectionQuery = '''"STATUS" IN ('CLOSED', 'Closed')'''
-    setExpression = "'2014-01-01'" ## Will have to check this.
-    CalculateField_management(fcAsFeatureLayer, "ToDate2", setExpression, "PYTHON_9.3")
-    
-    #-14
-    selectionQuery = '''"LRS_ROUTE_PREFIX" = 'L' AND "RouteID" IS NULL'''
-    setExpression = "!LRS_COUNTY_PRE! + !LRS_ROUTE_PREFIX! + !LRS_ROUTE_NUM1! + !LRS_ROUTE_SUFFIX! + !LRS_UNIQUE_IDENT1! + !LRS_PRIMARY_DIR!"
-    CalculateField_management(fcAsFeatureLayer, "RouteID", setExpression, "PYTHON_9.3")
-    
-    #-15
-    selectionQuery = '''"LRS_ROUTE_PREFIX" = 'X' AND "RouteID" IS NULL'''
-    setExpression = "!LRS_COUNTY_PRE! + !LRS_ROUTE_PREFIX! + !LRS_ROUTE_NUM1! + !LRS_UNIQUE_IDENT1! + !LRS_PRIMARY_DIR!"
-    CalculateField_management(fcAsFeatureLayer, "RouteID", setExpression, "PYTHON_9.3")
-    
-    #-16
-    selectionQuery = '''"LRS_ROUTE_PREFIX" = 'C' AND "LRS_PRIMARY_DIR" IS NULL'''
-    setExpression = "0"
-    CalculateField_management(fcAsFeatureLayer, "LRS_PRIMARY_DIR", setExpression, "PYTHON_9.3")
-    ##---------------------End of Parsing/Precalculation---------------------##
-    
-    # This (the 2nd email version) should entirely supersede the contents of the first email
-    # version, but the attachment content from the first email still runs prior to this,
-    # hence the negatively numbered calculations above.
-    
-    ##--------------------------Start of County Key2-------------------------##
-    #1
-    #/*  set all unique Identifiers to 00 if they werent calculated from the LRS Key   */
-    selectionQuery = '''"LRS_UNIQUE_IDENT1" IS NULL'''
-    setExpression = "'00'"
-    CalculateField_management(fcAsFeatureLayer, "LRS_UNIQUE_IDENT1", setExpression, "PYTHON_9.3")
-    
-    #2
-    #/*  Calculate the County key field for centerlines identified as Ramps   */
-    #/*  Assume all route suffix codes for ramps are 0   */
-    selectionQuery = '''"LRS_ROUTE_PREFIX" = 'X' '''
-    setExpression = "!LRS_COUNTY_PRE! + '4' + !LRS_ROUTE_NUM! + '0' + !KDOT_DIRECTION_CALC! + !LRS_UNIQUE_IDENT1!"
-    CalculateField_management(fcAsFeatureLayer, "COUNTYKEY2", setExpression, "PYTHON_9.3")
-    
-    #3
-    #/*  Calculate the County key field for rural major, minor, and urban collector   */
-    #/*  Assume all route suffix codes for these classified routes are 0   */
-    selectionQuery = '''"LRS_ROUTE_PREFIX" in ('R', 'M', 'C')'''
-    setExpression = "!LRS_COUNTY_PRE! + '5' + !LRS_ROUTE_NUM! + '0' + !KDOT_DIRECTION_CALC! + !LRS_UNIQUE_IDENT1!"
-    CalculateField_management(fcAsFeatureLayer, "COUNTYKEY2", setExpression, "PYTHON_9.3")
-    
-    #4
-    #/*  Calculate the County key field Kansas State Highwayas without a unique identifier  */
-    selectionQuery = '''"LRS_ROUTE_PREFIX" = 'K' AND "LRS_UNIQUE_IDENT1" = '00' '''
-    setExpression = "!LRS_COUNTY_PRE! + '3' + !LRS_ROUTE_NUM! + !LRS_ROUTE_SUFFIX! + !KDOT_DIRECTION_CALC!"
-    CalculateField_management(fcAsFeatureLayer, "COUNTYKEY2", setExpression, "PYTHON_9.3")
-    
-    #5
-    #/*  Calculate the County key field Kansas State Highways with a unique identifier */
-    #/*  Assume State Key unique identifier is the same as the county route unique identifier   */
-    selectionQuery = '''"LRS_ROUTE_PREFIX" = 'K' AND "LRS_UNIQUE_IDENT1" <> '00'  '''
-    setExpression = "!LRS_COUNTY_PRE! + '3' + !LRS_ROUTE_NUM! + !LRS_ROUTE_SUFFIX! + !KDOT_DIRECTION_CALC! + !LRS_UNIQUE_IDENT1!"
-    CalculateField_management(fcAsFeatureLayer, "COUNTYKEY2", setExpression, "PYTHON_9.3")
-    
-    #6
-    #/*  Calculate the County key field for US Numbered Routes with no unique identifier   */
-    selectionQuery = '''"LRS_ROUTE_PREFIX" = 'U' AND "LRS_UNIQUE_IDENT1" = '00' '''
-    setExpression = "!LRS_COUNTY_PRE! + '2' + !LRS_ROUTE_NUM! + !LRS_ROUTE_SUFFIX! + !KDOT_DIRECTION_CALC!"
-    CalculateField_management(fcAsFeatureLayer, "COUNTYKEY2", setExpression, "PYTHON_9.3")
-    
-    #7
-    #/*  Calculate the County key field for US Numbered Routes with unique identifier   */
-    #/*  Assume State Key unique identifier is the same as the county route unique identifier   */
-    selectionQuery = '''"LRS_ROUTE_PREFIX" = 'U' AND "LRS_UNIQUE_IDENT1" <> '00' '''
-    setExpression = "!LRS_COUNTY_PRE! + '2' + !LRS_ROUTE_NUM! + !LRS_ROUTE_SUFFIX! + !KDOT_DIRECTION_CALC! + !LRS_UNIQUE_IDENT1!"
-    CalculateField_management(fcAsFeatureLayer, "COUNTYKEY2", setExpression, "PYTHON_9.3")
-    
-    #8
-    #/*  Calculate the County key field for Interstate Highways */
-    #/*  Assume there are no unique identifiers on these */
-    selectionQuery = '''"LRS_ROUTE_PREFIX" = 'I' '''
-    setExpression = "!LRS_COUNTY_PRE! + '1' + !LRS_ROUTE_NUM! + !LRS_ROUTE_SUFFIX! + !KDOT_DIRECTION_CALC!"
-    CalculateField_management(fcAsFeatureLayer, "COUNTYKEY2", setExpression, "PYTHON_9.3")
-    ##---------------------------End of County Key2--------------------------##
-    
-    ##---------------------------Start of State Key2-------------------------##
-    #9
-    #/*  Calculate the State Key field for Kansas State Highways with Unique Identifiers */
-    selectionQuery = '''"LRS_ROUTE_PREFIX" = 'K' AND "LRS_UNIQUE_IDENT1" <> '00' '''
-    setExpression = "'3' + str(!LRS_ROUTE_NUM!)[2:5] + !LRS_ROUTE_SUFFIX! + !KDOT_DIRECTION_CALC! + str(!LRS_UNIQUE_IDENT1!)[1]"
-    CalculateField_management(fcAsFeatureLayer, "STATEKEY2", setExpression, "PYTHON_9.3")
-    
-    #10
-    #/*  Calculate the State Key field for Kansas State Highways without Unique Identifiers */
-    selectionQuery = '''"LRS_ROUTE_PREFIX" = 'K' AND "LRS_UNIQUE_IDENT1" = '00' '''
-    setExpression = "'3' + str(!LRS_ROUTE_NUM!)[2:5] + !LRS_ROUTE_SUFFIX! + !KDOT_DIRECTION_CALC!"
-    CalculateField_management(fcAsFeatureLayer, "STATEKEY2", setExpression, "PYTHON_9.3")
-    
-    #11
-    #/*  Calculate the State Key field for Kansas State Highways with Unique Identifiers */
-    selectionQuery = '''"LRS_ROUTE_PREFIX" = 'U' AND "LRS_UNIQUE_IDENT1" <> '00' '''
-    setExpression = "'2' + str(!LRS_ROUTE_NUM!)[2:5] + !LRS_ROUTE_SUFFIX! + !KDOT_DIRECTION_CALC! + str(!LRS_UNIQUE_IDENT1!)[1]"
-    CalculateField_management(fcAsFeatureLayer, "STATEKEY2", setExpression, "PYTHON_9.3")
-    
-    #12
-    #/*  Calculate the State key field for US Numbered Routes without unique identifiers   */
-    selectionQuery = '''"LRS_ROUTE_PREFIX" = 'U' AND "LRS_UNIQUE_IDENT1" = '00' '''
-    setExpression = "'2' + str(!LRS_ROUTE_NUM!)[2:5] + !LRS_ROUTE_SUFFIX! + !KDOT_DIRECTION_CALC!"
-    CalculateField_management(fcAsFeatureLayer, "STATEKEY2", setExpression, "PYTHON_9.3")
-    
-    #13
-    #/*  Calculate the State key field for US Numbered Routes with unique identifiers   */
-    selectionQuery = '''"LRS_ROUTE_PREFIX" = 'I' AND "LRS_UNIQUE_IDENT1" <> '00' '''
-    setExpression = "'1' + str(!LRS_ROUTE_NUM!)[2:5] + !LRS_ROUTE_SUFFIX! + !KDOT_DIRECTION_CALC! + str(!LRS_UNIQUE_IDENT1!)[1]"
-    CalculateField_management(fcAsFeatureLayer, "STATEKEY2", setExpression, "PYTHON_9.3")
-    
-    #14
-    #/*  Calculate the County key field for Interstate Highways */
-    #/*  Assume there are no unique identifiers on these */
-    selectionQuery = '''"LRS_ROUTE_PREFIX" = 'I' '''
-    setExpression = "'1' + str(!LRS_ROUTE_NUM!)[2:5] + !LRS_ROUTE_SUFFIX! + !KDOT_DIRECTION_CALC!"
-    CalculateField_management(fcAsFeatureLayer, "STATEKEY2", setExpression, "PYTHON_9.3")
-    ##----------------------------End of State Key2--------------------------##
-    print("KDOT Key Calculation Complete.")
 
 
 def KDOTOverlappingRoutesDissolveFix():
@@ -2078,13 +1148,38 @@ def KDOTOverlappingRoutesDissolveFix():
     CalculateField_management(fcAsFeatureLayer, KDOTMeasEnd, "!" + str(n1ToMeas) + "!", "PYTHON_9.3")
 
 
-#TODO: This currently not respecting manual ghost route flagging. Needs to be fixed ASAP.
-# Perhaps the fix is to run this once, not exclude the routes and send the routes to manual editing.
-# I.E. include it in the single RC to PRC conversion
+def SkipDissolveButCreateNecessaryOutput():
+    # 1a.) Make an copy of the simplified and flipped centerlines in
+    # the location that the dissolved output would go.
+    CopyFeatures_management(flippedOutput, dissolvedFlippedOutput)
+    # 1b.) Make a feature layer from the simplified and flipped centerlines.
+    MakeFeatureLayer_management(dissolvedFlippedOutput, fcAsFeatureLayer)
+    # Now calculate the data from the dissolve back into the KDOT_LRS_KEY and county_log_begin and county_log_end.
+    # Fields to calculate into are: KDOTRouteId, KDOTMeasBeg, KDOTMeasEnd
+    # Fields to calculate from are: n1RouteId, n1FromMeas, n1ToMeas
+    CalculateField_management(fcAsFeatureLayer, KDOTRouteId, "!" + str(n1RouteId) + "!", "PYTHON_9.3")
+    CalculateField_management(fcAsFeatureLayer, KDOTMeasBeg, "!" + str(n1FromMeas) + "!", "PYTHON_9.3")
+    CalculateField_management(fcAsFeatureLayer, KDOTMeasEnd, "!" + str(n1ToMeas) + "!", "PYTHON_9.3")
+
+
+
+#TODO: This is currently not respecting manual ghost route flagging.
+# The fix is to run this once, not exclude the routes and send the routes to manual editing.
+# I.E. Include it in the single RC to PRC conversion
+# (Said conversion has since been renamed Initial One-Time Process)
 # Then, do not run it again after, allowing for manual editors to match their ghost route suffixes
 # with the overlap detection done here. Otherwise, a process needs to be developed to NOT flag
-# routes based on attributes when there is a spatial relationship with a route that would not be
+# routes based on attributes when there is a *spatial relationship with a route* that would not be
 # flagged by this process, but which has already been flagged through a manual edit.
+# That's doable, but it would require extensive testing to make sure that it worked correctly
+# and without causing any other issues. Said testing time is not currently available.
+# Besides, ghost route flagging is one of the easier things to do manually, so it may not be
+# worth the effort to write and test a programmatic fix for it as the effort to do so
+# could exceed the effort needed to just manually fix the problems.
+## Also, 1Spatial should be able to handle County Border roads in a much better manner
+## than programmatic or manual ghost route flagging is able to do. So, don't spend a lot
+## of time working on this. Go work on correctly applying the 1Spatial Enhancement to merge
+## County Border roads along with their attributes, instead.
 def KDOTOverlappingRoutesFlaggingFix():
     # conflationCountyBoundary = r'\\gisdata\ArcGIS\GISdata\Connection_files\Conflation2012_RO.sde\Conflation.SDE.NG911\Conflation.SDE.CountyBoundary'
     # Copy the "Conflation.SDE.CountyBoundary" layer to the FGDB.
@@ -2092,6 +1187,10 @@ def KDOTOverlappingRoutesFlaggingFix():
     ##TODO: Change this so that overlap status is 'G' instead of 'Z' and make sure that
     # the 'G' and 'Z' Suffix segments are not being exported as Routes, nor are
     # routes with an OverlapStatus of 'G' or 'Z'.
+    
+    # 2017-12-16 Confirmed that this was changed so that it will set the overlap status to 'G'
+    # instead of 'Z'.
+    # Will check on the exports.
     
     if Exists(routesSourceIntermediate):
         Delete_management(routesSourceIntermediate)
@@ -2123,6 +1222,7 @@ def KDOTOverlappingRoutesFlaggingFix():
     fcAsFeatureLayerRSCFL_FCName = returnFeatureClass(routesSourceIntermediate)
     countyBoundary_FCName = returnFeatureClass(conflationCountyBoundary)
     
+    # This depends on correct attribution from each PSAP. Probably not reliable.
     joinField1 = 'STEWARD'
     indexFieldList = [joinField1]
     selectionQuery2 = "NOT (KDOT_COUNTY_L = KDOT_COUNTY_R)"
@@ -2158,7 +1258,7 @@ def KDOTOverlappingRoutesFlaggingFix():
     
     # ----------------------------------------------------------------------- #
     # "NOT (RoutesSource.LRS_COUNTY_PRE = CountyBoundary.KDOT_CountyNumStr)"
-    # causes Python and ArcMap to both crash when passed to
+    # causes both Python and ArcMap to crash when passed to
     # SelectLayerByAttribute_management for this layer.
     # Instead, use RoutesSource.LRS_COUNTY_PRE = CountyBoundary.KDOT_CountyNumStr, then
     # invert the selection.
@@ -2215,7 +1315,6 @@ def KDOTOverlappingRoutesFlaggingFix():
     CalculateField_management(fcAsFeatureLayerRSCFL, "OverlapStatus", expressionText, "PYTHON_9.3")
 
 
-
 def KDOT3RoutesSourceExport():
     # For this to work, you have to do whatever is needed to populate the LRS_ROUTE_PREFIX field correctly,
     # and also to populate the LRS_ROUTE_SUFFIX field with 'G' where necessary. -- Then, you can
@@ -2264,7 +1363,7 @@ def KDOT3RoutesSourceExport():
     print("Export complete.")
     
     # Contains only the state network routes and uses a different measure for the location along the route.
-    selectionQuery3 = '''LRS_ROUTE_PREFIX IN ('I', 'U', 'K')'''
+    selectionQuery3 = '''LRS_ROUTE_PREFIX IN ('I', 'U', 'K') AND OverlapStatus NOT IN ('G', 'Z')'''
     SelectLayerByAttribute_management(processedFeatureLayer, "NEW_SELECTION", selectionQuery3)
     ## Check to see if the output dataset exists. If so, delete it
     # then save the features.
@@ -2288,7 +1387,7 @@ def KDOT3RoutesSourceExport():
 
 def main():
     print("Starting the routes source creation process.")
-    routesSourceCreation()
+    arnoldCenterlinesProcessing()
     print("Routes source creation completed.")
 
 
@@ -2297,7 +1396,8 @@ if __name__ == "__main__":
 
 else:
     pass
-    
-# Several places in the Non-State system where measures are backwards and need to be flipped -- geometry also needs to be flipped.
+
+# Several places in the Non-State system where measures are backwards and need to be flipped, geometry also needs to be flipped.
+# But the more difficult part is that the segment measures also need to be swapped.
 # 23 ----------- 34
 # 34 --26.3 26.3-23
